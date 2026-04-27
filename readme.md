@@ -6,8 +6,8 @@ AI Assisted Tamper-Proof Flight Recorder for Connected Aircrafts
 
 ```text
 BlueBox/
+├── backend/                          # Anomaly flagging and explainable AI outputs and advisories
 ├── crypto_layer/                     # Cryptographic integrity and tamper-proof logging
-├── explainability_layer/             # Anomaly flagging and explainable AI outputs and advisories
 ├── UI_layer/                         # Frontend dashboard and visual interface
 ├── demo/                             # Demo scripts and scenarios
 │   ├── demo.md
@@ -19,19 +19,17 @@ BlueBox/
 |   ├── compliance.md
 │   ├── protocols.md
 │   └── regulations.md
-├── input_traffic/                    # Synthetic traffic inputs
-│   ├── avionics/
-│   ├── cabin/
-│   └── maintenance/
-└── bluebox-env/                      # Local Python virtual environment
+├── data/                             # Synthetic traffic
+│   ├── raw/
+└── 
 ```
 
 ## Directory Use
 
 - `crypto_layer/`: hash chaining, signing, and integrity checks
-- `explainability_layer/`: anomaly explanation and natural-language advisories complying with EU Part-IS
+- `backend/`: anomaly explanation and natural-language advisories complying with EU Part-IS
 - `UI_layer/`: dashboard and replay views
 - `demo/`: runnable demo logic and attack scenarios
 - `docs_md/`: supporting technical and regulatory notes
-- `input_traffic/`: training, testing, and replay inputs by domain
+- `data/`: training, testing, and replay inputs by domain
 - `bluebox-env/`: local development environment
