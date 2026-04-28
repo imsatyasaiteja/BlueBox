@@ -25,7 +25,7 @@ ANOMALY_RATE = 0.02
 # Anomaly magnitudes.
 ANOMALY_SIZE_BYTES = 5000
 SPIKE_PPS = 1000
-SPIKE_BURST_LEN = 10  # packets per frequency-spike burst
+SPIKE_BURST_LEN = 100  # packets per frequency-spike burst
 
 
 @dataclass
@@ -101,25 +101,42 @@ def _build_packet(cfg: DomainConfig, payload_size: int):
 
 
 def _select_anomaly_indices(total: int, rate: float):
-    """Pick which packet indices will be anomalous and what type each is."""
-    n_anomalies = int(total * rate)
-    indices = sorted(random.sample(range(total), n_anomalies))
+    """Pick anomalous packet indices and assign a type to each.
 
-    labels = {}  # index -> anomaly_type
-    i = 0
-    while i < len(indices):
-        # Roughly half the anomalies are size, the other half are frequency
-        # bursts (which consume several consecutive indices to look like a
-        # short scan/flood).
-        if random.random() < 0.5:
-            labels[indices[i]] = "size"
-            i += 1
-        else:
-            # Mark this index and a few following ones as a burst.
-            burst_end = min(i + SPIKE_BURST_LEN, len(indices))
-            for j in range(i, burst_end):
-                labels[indices[j]] = "frequency"
-            i = burst_end
+    Size anomalies: randomly scattered — large payload at a normal timestamp.
+    Frequency burst: one CONTIGUOUS block of SPIKE_BURST_LEN consecutive
+    indices so that all burst packets cluster tightly in time.  Random scatter
+    would spread them across seconds and make the rolling-rate feature flat.
+    """
+    n_anomalies = int(total * rate)
+    # 80% of the budget goes to the frequency burst so the rolling-rate feature
+    # has enough contiguous packets to create a visible separation from normal.
+    # The remaining 20% are size anomalies to keep both anomaly types present.
+    n_freq = min(SPIKE_BURST_LEN, int(n_anomalies * 0.8))
+    n_size = n_anomalies - n_freq
+
+    labels = {}
+
+    # Size anomalies: random positions.
+    size_indices = random.sample(range(total), n_size)
+    for idx in size_indices:
+        labels[idx] = "size"
+
+    # Frequency burst: one contiguous block, avoiding size-anomaly positions.
+    size_set = set(size_indices)
+    for _ in range(100):  # retry until a clean run is found
+        start = random.randint(0, total - n_freq)
+        block = range(start, start + n_freq)
+        if not any(p in size_set for p in block):
+            for idx in block:
+                labels[idx] = "frequency"
+            break
+    else:
+        # Fallback: pick remaining n_freq positions that aren't already labeled.
+        remaining = [i for i in range(total) if i not in size_set]
+        for idx in random.sample(remaining, n_freq):
+            labels[idx] = "frequency"
+
     return labels
 
 
