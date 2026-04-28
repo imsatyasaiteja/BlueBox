@@ -11,17 +11,16 @@ BlueBox/
 ├── UI_layer/                         # Frontend dashboard and visual interface
 ├── demo/                             # Demo scripts and scenarios
 │   ├── demo.md
-│   ├── live_dashboard.py
-│   ├── traffic_generator.py
-│   └── scenarios/                    # Normal and attack traffic scenarios
+│   ├── bluebox_dashboard.py
+│   ├── traffic_simulator.py
+│   └── attack_scenarios/                    # Normal and attack traffic scenarios
 ├── docs_md/                          # Reference markdown docs
 │   ├── architecture.md
 |   ├── compliance.md
 │   ├── protocols.md
 │   └── regulations.md
-├── data/                             # Synthetic traffic
-│   ├── raw/
-└── 
+└── data/                             # Synthetic traffic for testing
+    ├── raw/ 
 ```
 
 ## Directory Use
@@ -31,5 +30,4 @@ BlueBox/
 - `UI_layer/`: dashboard and replay views
 - `demo/`: runnable demo logic and attack scenarios
 - `docs_md/`: supporting technical and regulatory notes
-- `data/`: training, testing, and replay inputs by domain
-- `bluebox-env/`: local development environment
+- `data/`: sythentic raw network log data inputs by domain
