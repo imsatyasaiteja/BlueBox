@@ -1,0 +1,26 @@
+{
+  "afdx": {
+    "packet_size_mean": 93.48733333333334,
+    "packet_size_std": 307.5154974515738,
+    "frequency_mean": 196.21666666666667,
+    "frequency_std": 31.2111580831101
+  },
+  "avionics": {
+    "packet_size_mean": 0.0,
+    "packet_size_std": 1.0,
+    "frequency_mean": 500.5,
+    "frequency_std": 288.6749902572095
+  },
+  "cabin": {
+    "packet_size_mean": 475.952,
+    "packet_size_std": 283.2777818608441,
+    "frequency_mean": 101.01033333333334,
+    "frequency_std": 13.49603249930224
+  },
+  "maintenance": {
+    "packet_size_mean": 220.972,
+    "packet_size_std": 299.4365629244365,
+    "frequency_mean": 51.61833333333333,
+    "frequency_std": 7.5739023773892304
+  }
+}

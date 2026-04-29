@@ -47,26 +47,26 @@ def _payload_size(pkt) -> int:
     return 0
 
 
-def _rolling_freq_per_domain(df: pd.DataFrame) -> pd.Series:
-    """Rolling 1-second packet count per domain, aligned to df's index.
+def _local_pps_per_domain(df: pd.DataFrame) -> pd.Series:
+    """Instantaneous packet rate = 1 / inter-packet delay, per domain.
 
-    Counts all packets in the same domain that fall inside the trailing
-    1-second window. Burst anomalies in a domain spike this feature.
+    Unlike a rolling window count, IPD-based rate has no carry-over: only the
+    packet whose arrival triggered the interval is affected. Normal packets at
+    X pps have IPD = 1/X → local_pps = X. Burst anomaly packets at 1000 pps
+    have IPD = 0.001s → local_pps = 1000. Rate is clamped to [1, 10000] pps.
+    The first packet in each domain (no predecessor) is assigned the domain median.
     """
-    work = df[["timestamp", "domain"]].copy()
-    work["t_dt"] = pd.to_datetime(work["timestamp"], unit="s")
-    work = work.sort_values("t_dt")
+    result = pd.Series(0.0, index=df.index, dtype=float)
 
-    counts = (
-        work.set_index("t_dt")
-            .groupby("domain", group_keys=False)["timestamp"]
-            .rolling("1s")
-            .count()
-            .astype(int)
-    )
-    counts = counts.reset_index(level=0, drop=True)
-    work["frequency"] = counts.values
-    return work.sort_index()["frequency"]
+    for domain, grp in df.groupby("domain"):
+        grp_s = grp.sort_values("timestamp")
+        dt = grp_s["timestamp"].diff()          # NaN for first row
+        pps = (1.0 / dt.clip(lower=1e-4)).clip(upper=10000.0)
+        # Fill first packet with median of the rest.
+        pps.iloc[0] = float(pps.iloc[1:].median())
+        result[grp_s.index] = pps.values
+
+    return result
 
 
 def parse_pcap(pcap_path: str, labels_csv_path: str, domain: str) -> pd.DataFrame:
@@ -103,7 +103,7 @@ def parse_pcap(pcap_path: str, labels_csv_path: str, domain: str) -> pd.DataFram
         })
 
     df = pd.DataFrame(rows)
-    df["frequency"] = _rolling_freq_per_domain(df)
+    df["frequency"] = _local_pps_per_domain(df)
     return df[UNIFIED_COLUMNS]
 
 
