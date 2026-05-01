@@ -1,0 +1,71 @@
+# BlueBox Attack Scenario: INJECTION ATTACK
+# Generic injection attack with payload tampering
+# Confidence: 88%
+
+name: injection_attack
+description: "Attacker injects malicious payloads into network traffic"
+
+# Anomaly parameters
+anomaly_rate: 0.18          # 18% anomaly rate during attack window
+attack_window_start: 0.20   # Start 20% into traffic capture
+attack_window_duration: 0.4 # 40% of total duration
+
+# Attack details
+attack_vector:
+  source_domain: cabin
+  target_domain: avionics
+  method: "payload_injection"
+  description: "Unauthorized payload data inserted into aircraft systems"
+
+# Anomaly types
+attack_types:
+  - injection_attack
+  - payload_tampering
+  - data_exfiltration
+
+# Traffic characteristics during attack
+traffic_characteristics:
+  - "Unexpected packet payload increases"
+  - "Modified packet headers"
+  - "Non-standard protocol sequences"
+  - "Payload checksums fail validation"
+
+# Duration multiplier
+duration_multiplier: 1.5
+
+# ML detection targets
+expected_anomaly_signals:
+  - "payload_size_anomaly"
+  - "header_format_violation"
+  - "protocol_sequence_violation"
+  - "checksum_mismatch"
+  - "unusual_data_patterns"
+
+# Forensic indicators
+forensic_indicators:
+  - "14:20:00 - Injection attempt detected"
+  - "14:20:05 - Payload size violation"
+  - "14:20:10 - Protocol sequence anomaly"
+  - "14:20:15 - Checksum validation failure"
+  - "14:20:20 - Attack source identified"
+
+# Attack progression
+attack_phases:
+  - phase: "reconnaissance"
+    duration: "5s"
+    indicator: "Network scanning"
+  
+  - phase: "payload_preparation"
+    duration: "10s"
+    indicator: "Elevated packet sizes"
+  
+  - phase: "injection"
+    duration: "15s"
+    indicator: "Anomaly spike"
+  
+  - phase: "cleanup"
+    duration: "10s"
+    indicator: "Protocol normalization"
+
+severity: HIGH
+impact: "System reliability compromise"

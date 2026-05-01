@@ -1,0 +1,55 @@
+# BlueBox Attack Scenario: COMMAND INJECTION
+# Malicious command injection into control surfaces
+# Confidence: 95%
+
+name: command_injection
+description: "Attacker injects malicious commands into avionics control systems"
+
+# Anomaly parameters
+anomaly_rate: 0.20          # 20% anomaly rate during attack window
+attack_window_start: 0.25   # Start 25% into traffic capture
+attack_window_duration: 0.3 # 30% of total duration
+
+# Attack details
+attack_vector:
+  source_domain: maintenance
+  target_domain: avionics
+  method: "command_injection"
+  target: "CONTROL_SURFACE_UPDATE"
+  description: "Malicious commands sent to flight control systems"
+
+# Anomaly types
+attack_types:
+  - command_injection
+  - control_surface_tampering
+  - data_injection
+
+# Traffic characteristics during attack
+traffic_characteristics:
+  - "Abnormally large payload sizes (>5000 bytes)"
+  - "Targeted commands to control systems"
+  - "Multiple retransmissions of corrupted commands"
+  - "Unusual parameter values in ARINC 429 words"
+
+# Duration multiplier for packet generation
+duration_multiplier: 1.2
+
+# ML detection targets
+expected_anomaly_signals:
+  - "payload_size_spike"
+  - "command_format_violation"
+  - "parameter_value_anomaly"
+  - "rapid_state_changes"
+
+# Forensic indicators
+forensic_indicators:
+  - "14:45:00 - Injection payload detected"
+  - "14:45:02 - Control surface command anomaly"
+  - "14:45:05 - Flight control parameter out of range"
+  - "14:45:10 - System alerts triggered"
+  - "14:45:15 - Control authority reverted to backup"
+
+# Severity assessment
+severity: CRITICAL
+impact: "Potential aircraft control compromise"
+detection_priority: HIGHEST

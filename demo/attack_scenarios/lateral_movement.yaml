@@ -1,0 +1,48 @@
+# BlueBox Attack Scenario: LATERAL MOVEMENT
+# Attacker moves from maintenance domain to avionics domain
+# Confidence: 94%
+
+name: lateral_movement
+description: "Attacker lateral movement from maintenance to avionics domain"
+
+# Anomaly parameters
+anomaly_rate: 0.15          # 15% anomaly rate during attack window
+attack_window_start: 0.3    # Start 30% into traffic capture
+attack_window_duration: 0.2 # 20% of total duration
+
+# Attack details
+attack_vector:
+  source_domain: maintenance
+  target_domain: avionics
+  method: "network_reconnaissance"
+  description: "Attacker scans avionics network from maintenance domain"
+
+# Anomaly types (what Isolation Forest should detect)
+attack_types:
+  - lateral_movement
+  - network_scan
+  - burst_traffic
+
+# Traffic characteristics during attack
+traffic_characteristics:
+  - "Sudden increase in inter-domain traffic"
+  - "Unusual port/IP combinations"
+  - "High-frequency burst patterns (1000+ pps)"
+  - "Connection attempts to avionics addresses"
+
+# Duration multiplier for packet generation
+duration_multiplier: 1.0
+
+# ML detection targets
+expected_anomaly_signals:
+  - "packet_frequency_spike"
+  - "unusual_port_combinations"
+  - "inter_domain_communication"
+  - "scanning_pattern"
+
+# Forensic timeline
+forensic_indicators:
+  - "14:32:00 - Attack initiated from maintenance workstation"
+  - "14:32:15 - First network probe to avionics"
+  - "14:32:30 - Burst of connection attempts"
+  - "14:33:00 - Attacker establishes persistence"

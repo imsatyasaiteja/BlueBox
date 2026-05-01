@@ -1,0 +1,29 @@
+# BlueBox Attack Scenario: NORMAL
+# Baseline traffic with no attacks (1% baseline anomaly rate)
+
+name: normal
+description: "Baseline normal aircraft network traffic with no attacks"
+
+# Anomaly parameters
+anomaly_rate: 0.01          # 1% baseline anomaly (hardware errors, packet loss)
+attack_window_start: null   # No attack window
+
+# Traffic generation
+domains:
+  - cabin
+  - maintenance
+  - avionics
+
+# No specific attack types
+attack_types:
+  - none
+
+# Duration multiplier for packet generation
+duration_multiplier: 1.0
+
+# Expected anomalies (for testing purposes)
+expected_characteristics:
+  - "Low frequency of anomalies"
+  - "No organized attack patterns"
+  - "Anomalies should be random packet corruptions"
+  - "Baseline for comparison with attack scenarios"

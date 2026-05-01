@@ -1,2 +1,0 @@
-"""BlueBox cryptographic logger layer."""
-

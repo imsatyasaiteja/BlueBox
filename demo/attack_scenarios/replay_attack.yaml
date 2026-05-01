@@ -1,0 +1,61 @@
+# BlueBox Attack Scenario: REPLAY ATTACK
+# Attacker replays captured commands to aircraft systems
+# Confidence: 87%
+
+name: replay_attack
+description: "Attacker replays previously captured commands to aircraft systems"
+
+# Anomaly parameters
+anomaly_rate: 0.12          # 12% anomaly rate during attack window
+attack_window_start: 0.35   # Start 35% into traffic capture
+attack_window_duration: 0.25 # 25% of total duration
+
+# Attack details
+attack_vector:
+  source_domain: maintenance
+  target_domain: avionics
+  method: "command_replay"
+  description: "Previously captured commands retransmitted out of sequence"
+
+# Anomaly types
+attack_types:
+  - replay_attack
+  - command_duplication
+  - sequence_violation
+
+# Traffic characteristics during attack
+traffic_characteristics:
+  - "Duplicate command sequences"
+  - "Out-of-sequence packet transmission"
+  - "Repeated ARINC 429 words"
+  - "Timestamp violations"
+
+# Duration multiplier
+duration_multiplier: 1.1
+
+# ML detection targets
+expected_anomaly_signals:
+  - "duplicate_sequence_detection"
+  - "temporal_sequence_violation"
+  - "repeated_command_pattern"
+  - "timestamp_inconsistency"
+
+# Forensic indicators
+forensic_indicators:
+  - "14:50:00 - Command replay attack initiated"
+  - "14:50:03 - Duplicate command sequence #1"
+  - "14:50:08 - Duplicate command sequence #2"
+  - "14:50:13 - Duplicate command sequence #3"
+  - "14:50:18 - Attack pattern recognized"
+  - "14:50:20 - System rejected replayed commands"
+
+# Attack characteristics
+attack_signature:
+  - "Commands execute in reverse order"
+  - "Timestamp values repeat within seconds"
+  - "Sequence numbers out of order"
+  - "ARINC 429 SSM field frozen"
+
+severity: MEDIUM-HIGH
+impact: "Potential unintended system state transitions"
+detection_priority: HIGH
