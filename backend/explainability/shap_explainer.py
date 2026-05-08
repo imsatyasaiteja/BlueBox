@@ -1,12 +1,15 @@
 """
 BlueBox SHAP explainability layer.
 
-Computes per-feature SHAP attributions for flagged anomalies from both the
-PCAP and ARINC429 Isolation Forest models and generates human-readable
+Computes per-feature SHAP attributions for flagged anomalies from the per-domain
+PCAP Isolation Forest models and the ARINC429 model, then generates human-readable
 plain-English explanations driven by template logic (no LLM here).
 
-Actual trained features (corrected from raw field names):
-  PCAP model (2D)  : packet_size_zscore, frequency_zscore
+Actual trained features:
+  PCAP models (7D, one per domain):
+                     packet_size, frequency,
+                     packet_size_zscore, frequency_zscore,
+                     cross_domain_flag, port_anomaly_flag, protocol_anomaly_flag
   ARINC model (4D) : ssm_int, parity_valid, data_bits_zscore, frequency
 
 Public API
@@ -16,7 +19,7 @@ Public API
       and explanation_text.
 
 Run as __main__ to batch-explain all anomalies in traffic_scored.csv and
-write data/explanations/anomaly_explanations.json.
+write data/derived/explanations/anomaly_explanations.json.
 """
 
 import json
@@ -34,60 +37,80 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from backend.detection.anomaly_model import (  # noqa: E402
+    PCAP_DOMAINS,
     _parity_valid,
     apply_pcap_zscores,
     build_arinc_features,
 )
+from backend.shared.model_artifacts import (  # noqa: E402
+    ARINC_MODEL_PATH,
+    ARINC_STATS_PATH,
+    PCAP_STATS_PATH,
+    pcap_model_path,
+)
+from backend.shared.paths import ANOMALY_EXPLANATIONS_JSON, TRAFFIC_SCORED_CSV  # noqa: E402
+from backend.shared.schema import ARINC_FEATURES, PCAP_FEATURES  # noqa: E402
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
-PROJECT_ROOT     = Path(__file__).resolve().parents[2]
-DATA_SCORED      = PROJECT_ROOT / "data" / "normalized" / "traffic_scored.csv"
-EXPLANATIONS_OUT = PROJECT_ROOT / "data" / "explanations" / "anomaly_explanations.json"
-MODELS_DIR       = PROJECT_ROOT / "models"
+DATA_SCORED = TRAFFIC_SCORED_CSV
+EXPLANATIONS_OUT = ANOMALY_EXPLANATIONS_JSON
 
 # ── Feature names ─────────────────────────────────────────────────────────────
 
-PCAP_FEATURES  = ["packet_size_zscore", "frequency_zscore"]
-ARINC_FEATURES = ["ssm_int", "parity_valid", "data_bits_zscore", "frequency"]
-
-# Maps internal trained-feature names to human-readable aliases used in output.
+# Identity mapping for PCAP features avoids sv_dict key collision between raw
+# and z-score names.  ARINC-specific features keep their existing aliases.
 FEATURE_ALIAS = {
-    "packet_size_zscore": "packet_size",
-    "frequency_zscore":   "frequency",
-    "ssm_int":            "ssm_bits",
-    "parity_valid":       "parity_bit",
-    "data_bits_zscore":   "data_bits",
-    "frequency":          "frequency",
+    # PCAP (identity)
+    "packet_size":            "packet_size",
+    "frequency":              "frequency",
+    "packet_size_zscore":     "packet_size_zscore",
+    "frequency_zscore":       "frequency_zscore",
+    "cross_domain_flag":      "cross_domain_flag",
+    "port_anomaly_flag":      "port_anomaly_flag",
+    "protocol_anomaly_flag":  "protocol_anomaly_flag",
+    # ARINC
+    "ssm_int":          "ssm_bits",
+    "parity_valid":     "parity_bit",
+    "data_bits_zscore": "data_bits",
 }
 
-# ── Lazy-load cache ───────────────────────────────────────────────────────────
+# ── Lazy-load caches ──────────────────────────────────────────────────────────
 
-_PCAP_MODEL      = None
-_ARINC_MODEL     = None
-_PCAP_STATS      = None
-_ARINC_STATS     = None
-_PCAP_EXPLAINER  = None
-_ARINC_EXPLAINER = None
+_PCAP_MODELS:     dict = {}   # domain → IsolationForest
+_PCAP_EXPLAINERS: dict = {}   # domain → shap.TreeExplainer
+_ARINC_MODEL      = None
+_PCAP_STATS       = None
+_ARINC_STATS      = None
+_ARINC_EXPLAINER  = None
 
 
-def _ensure_loaded() -> None:
-    global _PCAP_MODEL, _ARINC_MODEL, _PCAP_STATS, _ARINC_STATS
-    global _PCAP_EXPLAINER, _ARINC_EXPLAINER
-    if _PCAP_MODEL is not None:
-        return
-    _PCAP_MODEL  = joblib.load(MODELS_DIR / "isolation_forest_pcap.pkl")
-    _ARINC_MODEL = joblib.load(MODELS_DIR / "isolation_forest_arinc.pkl")
-    _PCAP_STATS  = json.loads((MODELS_DIR / "pcap_domain_stats.json").read_text())
-    _ARINC_STATS = json.loads((MODELS_DIR / "arinc_label_stats.json").read_text())
-    # tree_path_dependent avoids the need for a background dataset and works
-    # correctly with IsolationForest's ExtraTreeRegressor internals.
-    _PCAP_EXPLAINER  = shap.TreeExplainer(
-        _PCAP_MODEL, feature_perturbation="tree_path_dependent"
-    )
-    _ARINC_EXPLAINER = shap.TreeExplainer(
-        _ARINC_MODEL, feature_perturbation="tree_path_dependent"
-    )
+def _pcap_model_path(domain: str) -> Path:
+    return pcap_model_path(domain)
+
+
+def _ensure_pcap_domain_loaded(domain: str) -> None:
+    global _PCAP_STATS
+    if domain not in _PCAP_MODELS:
+        model = joblib.load(_pcap_model_path(domain))
+        _PCAP_MODELS[domain]     = model
+        # tree_path_dependent avoids the need for a background dataset and works
+        # correctly with IsolationForest's ExtraTreeRegressor internals.
+        _PCAP_EXPLAINERS[domain] = shap.TreeExplainer(
+            model, feature_perturbation="tree_path_dependent"
+        )
+    if _PCAP_STATS is None:
+        _PCAP_STATS = json.loads(PCAP_STATS_PATH.read_text())
+
+
+def _ensure_arinc_loaded() -> None:
+    global _ARINC_MODEL, _ARINC_STATS, _ARINC_EXPLAINER
+    if _ARINC_MODEL is None:
+        _ARINC_MODEL    = joblib.load(ARINC_MODEL_PATH)
+        _ARINC_STATS    = json.loads(ARINC_STATS_PATH.read_text())
+        _ARINC_EXPLAINER = shap.TreeExplainer(
+            _ARINC_MODEL, feature_perturbation="tree_path_dependent"
+        )
 
 
 # ── Explanation text templates ─────────────────────────────────────────────────
@@ -99,20 +122,48 @@ def _pcap_explanation(top: list, event: dict, stats: dict, sv_dict: dict) -> str
 
     # Only describe a feature as an anomaly driver if its SHAP value is negative
     # (negative = pushing the decision_function score down = more anomalous).
-    # With only 2 PCAP features both always appear in top_features, so without
-    # this guard a size-anomaly row would falsely claim a "frequency spike."
-    if "packet_size" in top and sv_dict.get("packet_size", 0) < 0:
+    # Check both raw feature name and z-score alias since either may appear in top.
+    size_driven = (
+        ("packet_size"        in top and sv_dict.get("packet_size",        0) < 0) or
+        ("packet_size_zscore" in top and sv_dict.get("packet_size_zscore", 0) < 0)
+    )
+    if size_driven:
         mean = domain_stats.get("packet_size_mean", 0.0)
         parts.append(
             f"Anomaly driven by unusually large packet size "
             f"({int(event['packet_size'])} bytes vs domain average of {mean:.0f} bytes)."
         )
-    if "frequency" in top and sv_dict.get("frequency", 0) < 0:
+
+    freq_driven = (
+        ("frequency"        in top and sv_dict.get("frequency",        0) < 0) or
+        ("frequency_zscore" in top and sv_dict.get("frequency_zscore", 0) < 0)
+    )
+    if freq_driven:
         mean = domain_stats.get("frequency_mean", 0.0)
         parts.append(
             f"Frequency spike detected "
             f"({float(event['frequency']):.0f} pps vs domain baseline of {mean:.0f} pps)."
         )
+
+    if "cross_domain_flag" in top and sv_dict.get("cross_domain_flag", 0) < 0:
+        parts.append(
+            "Cross-domain connection detected: src and dst belong to different network zones."
+        )
+
+    if "port_anomaly_flag" in top and sv_dict.get("port_anomaly_flag", 0) < 0:
+        port = int(event.get("port", 0))
+        parts.append(
+            f"Unexpected port {port} for {domain} domain "
+            f"— possible command injection or unauthorized service."
+        )
+
+    if "protocol_anomaly_flag" in top and sv_dict.get("protocol_anomaly_flag", 0) < 0:
+        protocol = event.get("protocol", "unknown")
+        parts.append(
+            f"Unexpected protocol {protocol} detected on {domain} "
+            f"— does not match domain baseline."
+        )
+
     return " ".join(parts) if parts else "Anomaly detected in PCAP traffic."
 
 
@@ -139,7 +190,8 @@ def _arinc_explanation(top: list, event: dict, sv_dict: dict) -> str:
 def explain_event(event: dict) -> dict:
     """
     Takes a single raw event dict (matching SCHEMA.md).
-    Routes to the correct SHAP explainer based on event['data_format'].
+    Routes to the correct per-domain SHAP explainer based on event['data_format']
+    and event['domain'].
 
     Returns:
       {
@@ -151,20 +203,29 @@ def explain_event(event: dict) -> dict:
     PCAP events need: data_format, domain, packet_size, frequency.
     ARINC429 events additionally need: ssm_bits, raw_hex, data_bits, src.
     """
-    _ensure_loaded()
     fmt = event["data_format"]
 
     if fmt == "PCAP":
-        stats = _PCAP_STATS[event["domain"]]
-        ps_z  = max(0.0, (float(event["packet_size"]) - stats["packet_size_mean"]) / stats["packet_size_std"])
-        fr_z  = max(0.0, (float(event["frequency"])   - stats["frequency_mean"])   / stats["frequency_std"])
-        X     = np.array([[ps_z, fr_z]])
-        sv    = np.asarray(_PCAP_EXPLAINER.shap_values(X)).reshape(-1)  # (2,)
+        domain = event["domain"]
+        _ensure_pcap_domain_loaded(domain)
+        stats = _PCAP_STATS[domain]
+        ps    = float(event["packet_size"])
+        fr    = float(event["frequency"])
+        ps_z  = max(0.0, (ps - stats["packet_size_mean"]) / stats["packet_size_std"])
+        fr_z  = max(0.0, (fr - stats["frequency_mean"])   / stats["frequency_std"])
+        X     = np.array([[
+            ps, fr, ps_z, fr_z,
+            float(event.get("cross_domain_flag",     0)),
+            float(event.get("port_anomaly_flag",     0)),
+            float(event.get("protocol_anomaly_flag", 0)),
+        ]])
+        sv      = np.asarray(_PCAP_EXPLAINERS[domain].shap_values(X)).reshape(-1)  # (7,)
         sv_dict = {FEATURE_ALIAS[f]: float(v) for f, v in zip(PCAP_FEATURES, sv)}
         top     = sorted(sv_dict, key=lambda k: abs(sv_dict[k]), reverse=True)[:2]
         text    = _pcap_explanation(top, event, _PCAP_STATS, sv_dict)
 
     else:  # ARINC429
+        _ensure_arinc_loaded()
         label  = str(event.get("src", ""))
         ssm    = int(str(event.get("ssm_bits", "11")), 2)
         pv     = _parity_valid(str(event.get("raw_hex", "0x0")))
@@ -183,22 +244,30 @@ def explain_event(event: dict) -> dict:
 # ── Batch helpers ─────────────────────────────────────────────────────────────
 
 def _batch_pcap(pcap_df: pd.DataFrame) -> list:
-    """Compute explanations for all PCAP anomalous rows in one pass."""
-    feat_df = apply_pcap_zscores(pcap_df.copy(), _PCAP_STATS)
-    X       = feat_df[PCAP_FEATURES].values
-    sv_all  = np.asarray(_PCAP_EXPLAINER.shap_values(X))  # (n, 2)
+    """Compute explanations for all PCAP anomalous rows, routed per domain."""
+    records: list = []
 
-    records = []
-    for i, (_, row) in enumerate(pcap_df.iterrows()):
-        sv_dict = {FEATURE_ALIAS[f]: float(v) for f, v in zip(PCAP_FEATURES, sv_all[i])}
-        top     = sorted(sv_dict, key=lambda k: abs(sv_dict[k]), reverse=True)[:2]
-        text    = _pcap_explanation(top, row.to_dict(), _PCAP_STATS, sv_dict)
-        records.append({
-            **row.to_dict(),
-            "shap_values":      sv_dict,
-            "top_features":     top,
-            "explanation_text": text,
-        })
+    for domain in PCAP_DOMAINS:
+        dom_df = pcap_df[pcap_df["domain"] == domain]
+        if dom_df.empty:
+            continue
+
+        _ensure_pcap_domain_loaded(domain)
+        feat_df = apply_pcap_zscores(dom_df.copy(), _PCAP_STATS)
+        X       = feat_df[PCAP_FEATURES].values
+        sv_all  = np.asarray(_PCAP_EXPLAINERS[domain].shap_values(X))  # (n, 7)
+
+        for i, (_, row) in enumerate(dom_df.iterrows()):
+            sv_dict = {FEATURE_ALIAS[f]: float(v) for f, v in zip(PCAP_FEATURES, sv_all[i])}
+            top     = sorted(sv_dict, key=lambda k: abs(sv_dict[k]), reverse=True)[:2]
+            text    = _pcap_explanation(top, row.to_dict(), _PCAP_STATS, sv_dict)
+            records.append({
+                **row.to_dict(),
+                "shap_values":      sv_dict,
+                "top_features":     top,
+                "explanation_text": text,
+            })
+
     return records
 
 
@@ -210,6 +279,7 @@ def _batch_arinc(arinc_df: pd.DataFrame) -> list:
     The joined columns are used only for feature computation and explanation
     templating; the output record retains only the original scored-CSV columns.
     """
+    _ensure_arinc_loaded()
     original_cols = list(arinc_df.columns)
     merged, _     = build_arinc_features(arinc_df.copy(), label_stats=_ARINC_STATS)
     X             = merged[ARINC_FEATURES].values
@@ -235,10 +305,13 @@ def _batch_arinc(arinc_df: pd.DataFrame) -> list:
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    _ensure_loaded()
+    # Pre-load all per-domain PCAP models up front for the batch run.
+    for domain in PCAP_DOMAINS:
+        _ensure_pcap_domain_loaded(domain)
+    _ensure_arinc_loaded()
 
     scored     = pd.read_csv(DATA_SCORED)
-    pcap_anom  = scored[(scored["data_format"] == "PCAP")    & (scored["predicted_anomaly"] == 1)].copy()
+    pcap_anom  = scored[(scored["data_format"] == "PCAP")     & (scored["predicted_anomaly"] == 1)].copy()
     arinc_anom = scored[(scored["data_format"] == "ARINC429") & (scored["predicted_anomaly"] == 1)].copy()
 
     pcap_records  = _batch_pcap(pcap_anom)
@@ -258,7 +331,7 @@ def main() -> None:
     print("\n" + "=" * 60)
     print("  3 PCAP examples (one per domain)")
     print("=" * 60)
-    for domain in ["cabin", "maintenance", "afdx"]:
+    for domain in PCAP_DOMAINS:
         ex = next((r for r in pcap_records if r["domain"] == domain), None)
         if ex:
             print(f"\n  [{domain}]")

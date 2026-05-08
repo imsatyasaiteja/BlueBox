@@ -6,8 +6,11 @@ Generates synthetic Ethernet/IP traffic for three aircraft network domains
 plus a sidecar CSV with per-packet ground-truth anomaly labels.
 
 Anomaly types injected (~2% of packets):
-  - "size":      payload abnormally large (~5000 B), simulating data exfil.
-  - "frequency": tight burst (~1000 pps), simulating lateral-movement scans.
+  - "size":              payload abnormally large (~5000 B), simulating data exfil.
+  - "frequency":         tight burst (~1000 pps), simulating lateral-movement scans.
+  - "lateral_movement":  src in one domain subnet, dst in a different domain subnet.
+  - "command_injection": packets to sensitive control ports [22,23,502,2404,161].
+  - "replay":            burst of 10-20 identical packets at 1 ms intervals.
 """
 
 import csv
@@ -26,6 +29,12 @@ ANOMALY_RATE = 0.02
 ANOMALY_SIZE_BYTES = 5000
 SPIKE_PPS = 1000
 SPIKE_BURST_LEN = 100  # packets per frequency-spike burst
+
+# New attack generator counts.
+LATERAL_MOVEMENT_COUNT  = 20
+COMMAND_INJECTION_COUNT = 15
+REPLAY_MIN, REPLAY_MAX  = 10, 20
+COMMAND_INJECTION_PORTS = [22, 23, 502, 2404, 161]
 
 
 @dataclass
@@ -140,6 +149,97 @@ def _select_anomaly_indices(total: int, rate: float):
     return labels
 
 
+def lateral_movement_attack(
+    cfg: DomainConfig,
+    packets: list,
+    label_rows: list,
+    ts: float,
+    start_idx: int,
+) -> tuple:
+    """Append cross-domain packets: src in cfg's subnet, dst in a different domain."""
+    other = random.choice([d for d in DOMAINS if d.name != cfg.name])
+    idx = start_idx
+
+    for _ in range(LATERAL_MOVEMENT_COUNT):
+        src = _random_ip(cfg.ip_prefix, cfg.ip_octets)
+        dst = _random_ip(other.ip_prefix, other.ip_octets)
+        sport = random.randint(1024, 65535)
+
+        if cfg.proto == "tcp":
+            dport = random.choice(cfg.ports)
+            l4 = TCP(sport=sport, dport=dport)
+        else:
+            lo, hi = cfg.port_range
+            dport = random.randint(lo, hi)
+            l4 = UDP(sport=sport, dport=dport)
+
+        payload_len = max(1, cfg.normal_size - 54)
+        eth = Ether(src="02:00:00:00:00:01", dst="02:00:00:00:00:02")
+        pkt = eth / IP(src=src, dst=dst) / l4 / Raw(load=b"\x00" * payload_len)
+        pkt.time = ts
+
+        packets.append(pkt)
+        label_rows.append((idx, 1, "lateral_movement"))
+        idx += 1
+        ts += 1.0 / cfg.normal_pps
+
+    return ts, idx
+
+
+def command_injection_attack(
+    cfg: DomainConfig,
+    packets: list,
+    label_rows: list,
+    ts: float,
+    start_idx: int,
+) -> tuple:
+    """Append packets to sensitive control ports, simulating command injection."""
+    idx = start_idx
+
+    for _ in range(COMMAND_INJECTION_COUNT):
+        src = _random_ip(cfg.ip_prefix, cfg.ip_octets)
+        dst = _random_ip(cfg.ip_prefix, cfg.ip_octets)
+        sport = random.randint(1024, 65535)
+        dport = random.choice(COMMAND_INJECTION_PORTS)
+        proto = random.choice(["tcp", "udp"])
+
+        l4 = TCP(sport=sport, dport=dport) if proto == "tcp" else UDP(sport=sport, dport=dport)
+        payload_len = max(1, cfg.normal_size - 54)
+        eth = Ether(src="02:00:00:00:00:01", dst="02:00:00:00:00:02")
+        pkt = eth / IP(src=src, dst=dst) / l4 / Raw(load=b"\x00" * payload_len)
+        pkt.time = ts
+
+        packets.append(pkt)
+        label_rows.append((idx, 1, "command_injection"))
+        idx += 1
+        ts += 1.0 / cfg.normal_pps
+
+    return ts, idx
+
+
+def replay_attack(
+    cfg: DomainConfig,
+    packets: list,
+    label_rows: list,
+    ts: float,
+    start_idx: int,
+) -> tuple:
+    """Append 10-20 identical packets at 1 ms spacing, simulating a replay attack."""
+    n = random.randint(REPLAY_MIN, REPLAY_MAX)
+    template = _build_packet(cfg, cfg.normal_size)
+    idx = start_idx
+
+    for i in range(n):
+        pkt = template.copy()
+        pkt.time = ts + i * 0.001
+        packets.append(pkt)
+        label_rows.append((idx, 1, "replay"))
+        idx += 1
+
+    ts += n * 0.001
+    return ts, idx
+
+
 def generate_domain(cfg: DomainConfig, base_ts: float = 1_700_000_000.0):
     """Generate one PCAP + label CSV for a single domain.
 
@@ -175,6 +275,11 @@ def generate_domain(cfg: DomainConfig, base_ts: float = 1_700_000_000.0):
         label_rows.append((idx, 1 if atype != "none" else 0, atype))
         ts += dt
 
+    next_idx = PACKETS_PER_PCAP
+    ts, next_idx = lateral_movement_attack(cfg, packets, label_rows, ts, next_idx)
+    ts, next_idx = command_injection_attack(cfg, packets, label_rows, ts, next_idx)
+    ts, next_idx = replay_attack(cfg, packets, label_rows, ts, next_idx)
+
     wrpcap(cfg.output_pcap, packets)
 
     with open(cfg.output_csv, "w", newline="") as fh:
@@ -187,7 +292,7 @@ def generate_domain(cfg: DomainConfig, base_ts: float = 1_700_000_000.0):
         "domain": cfg.name,
         "pcap": cfg.output_pcap,
         "csv": cfg.output_csv,
-        "total": PACKETS_PER_PCAP,
+        "total": len(packets),
         "anomalies": n_anom,
     }
 

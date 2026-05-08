@@ -1,6 +1,0 @@
-{
-  "kty": "oct",
-  "alg": "HKDF-SHA256-STREAM-HMAC-SHA256",
-  "key_b64": "jgR/0GlTToRn2bCh3B8tIMJDA7kO1efETY6Yt8+4nRg=",
-  "warning": "development key; use BLUEBOX_DATA_KEY_B64 or KMS/HSM in production"
-}

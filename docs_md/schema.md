@@ -12,7 +12,7 @@ These come from parsing .pcap files. One row per packet.
 | Field        | Type   | Example                  | Notes                          |
 |--------------|--------|--------------------------|--------------------------------|
 | timestamp    | string | "2026-01-01T14:32:11.4"  | ISO 8601                       |
-| domain       | string | "cabin"                  | cabin / maintenance / avionics |
+| domain       | string | "cabin"                  | cabin / maintenance / afdx     |
 | data_format  | string | "PCAP"                   | always "PCAP" for these        |
 | src          | string | "192.168.1.10"           | source IP                      |
 | dst          | string | "192.168.1.1"            | destination IP                 |
@@ -67,3 +67,9 @@ additional fields before being handed to the logger to hash and store:
     data/raw/maintenance_traffic_labels.csv
     data/raw/afdx_traffic_labels.csv
     data/raw/arinc429_logs.csv
+
+## Derived data location
+
+    data/derived/normalized/traffic_normalized.csv
+    data/derived/scored/traffic_scored.csv
+    data/derived/explanations/anomaly_explanations.json
