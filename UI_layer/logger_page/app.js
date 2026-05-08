@@ -77,21 +77,52 @@ function renderEntries(entries) {
   $("entryCountLabel").textContent = `${entries.length} shown`;
   if (!entries.length) {
     const row = document.createElement("tr");
-    row.innerHTML = `<td colspan="6" class="empty-row">No entries yet. Append JSON or ingest a path to start the chain.</td>`;
+    const cell = document.createElement("td");
+    cell.colSpan = 6;
+    cell.className = "empty-row";
+    cell.textContent = "No entries yet. Append JSON or ingest a path to start the chain.";
+    row.appendChild(cell);
     tbody.appendChild(row);
     return;
   }
   for (const entry of entries) {
     const row = document.createElement("tr");
     const typeClass = String(entry.source_type || "").toLowerCase().replace(/[^a-z0-9]+/g, "-");
-    row.innerHTML = `
-      <td class="seq-cell">#${entry.sequence}</td>
-      <td><span class="badge ${typeClass}">${entry.source_type}</span></td>
-      <td>${entry.source_offset}</td>
-      <td>${entry.ingest_mode || "-"}</td>
-      <td class="hash-cell" title="${entry.entry_hash}">${shortHash(entry.entry_hash)}</td>
-      <td><button class="secondary" data-sequence="${entry.sequence}">Open</button></td>
-    `;
+
+    const seqCell = document.createElement("td");
+    seqCell.className = "seq-cell";
+    seqCell.textContent = `#${entry.sequence}`;
+    row.appendChild(seqCell);
+
+    const typeCell = document.createElement("td");
+    const badge = document.createElement("span");
+    badge.className = `badge ${typeClass}`.trim();
+    badge.textContent = entry.source_type || "";
+    typeCell.appendChild(badge);
+    row.appendChild(typeCell);
+
+    const offsetCell = document.createElement("td");
+    offsetCell.textContent = entry.source_offset == null ? "" : String(entry.source_offset);
+    row.appendChild(offsetCell);
+
+    const ingestModeCell = document.createElement("td");
+    ingestModeCell.textContent = entry.ingest_mode || "-";
+    row.appendChild(ingestModeCell);
+
+    const hashCell = document.createElement("td");
+    hashCell.className = "hash-cell";
+    hashCell.title = entry.entry_hash || "";
+    hashCell.textContent = shortHash(entry.entry_hash);
+    row.appendChild(hashCell);
+
+    const actionCell = document.createElement("td");
+    const button = document.createElement("button");
+    button.className = "secondary";
+    button.dataset.sequence = String(entry.sequence);
+    button.textContent = "Open";
+    actionCell.appendChild(button);
+    row.appendChild(actionCell);
+
     tbody.appendChild(row);
   }
   tbody.querySelectorAll("button").forEach((button) => {
