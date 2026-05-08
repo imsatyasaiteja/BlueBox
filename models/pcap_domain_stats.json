@@ -2,8 +2,8 @@
   "afdx": {
     "packet_size_mean": 73.99931972789116,
     "packet_size_std": 1.0,
-    "frequency_mean": 199.73061224489797,
-    "frequency_std": 14.770104998474876
+    "frequency_mean": 199.73027210884354,
+    "frequency_std": 14.77011030525358
   },
   "cabin": {
     "packet_size_mean": 458.0,

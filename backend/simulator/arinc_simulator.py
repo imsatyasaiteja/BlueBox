@@ -92,8 +92,15 @@ def _corrupt(word: int, label_octal: int):
     """Apply one of three anomaly mutations to a clean word."""
     kind = random.choice(["data", "ssm", "parity"])
     if kind == "data":
-        # XOR a random subset of the 19 data bits.
-        mask = random.randint(1, (1 << 19) - 1) << 10
+        # XOR a random subset of the 19 data bits, forcing an ODD number of
+        # flipped bits so the parity bit is always invalidated.  Even-bit-flip
+        # corruptions preserve parity and are indistinguishable from valid words
+        # by any observable feature; odd-bit-flip corruptions set parity_valid=0
+        # and are reliably detectable.
+        mask = random.randint(1, (1 << 19) - 1)
+        if bin(mask).count("1") % 2 == 0:
+            mask ^= 1  # flip one extra bit to make the total odd
+        mask <<= 10
         word ^= mask
     elif kind == "ssm":
         # Force an SSM that is NOT in the label's valid set.
