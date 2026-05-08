@@ -18,14 +18,18 @@ Mappings:
 """
 
 import math
+import os
+import sys
 
 import pandas as pd
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.abspath(os.path.join(_HERE, "..", ".."))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
-UNIFIED_COLUMNS = [
-    "timestamp", "domain", "data_format", "src", "dst",
-    "packet_size", "frequency", "protocol", "port", "is_anomaly",
-]
+from backend.shared.paths import ARINC_RAW_CSV
+from backend.shared.schema import BASE_EVENT_COLUMNS
 
 
 def _data_bits_bytes(s) -> int:
@@ -44,7 +48,7 @@ def _rolling_word_rate(timestamps: pd.Series) -> pd.Series:
     return tmp.sort_index()["frequency"]
 
 
-def parse_arinc(csv_path: str = "data/raw/arinc429_logs.csv") -> pd.DataFrame:
+def parse_arinc(csv_path: str = str(ARINC_RAW_CSV)) -> pd.DataFrame:
     """Parse the ARINC 429 CSV into the unified schema."""
     raw = pd.read_csv(csv_path)
 
@@ -61,7 +65,7 @@ def parse_arinc(csv_path: str = "data/raw/arinc429_logs.csv") -> pd.DataFrame:
         "is_anomaly":  raw["is_anomaly"].astype(int),
     })
     df["frequency"] = _rolling_word_rate(df["timestamp"])
-    return df[UNIFIED_COLUMNS]
+    return df[BASE_EVENT_COLUMNS]
 
 
 if __name__ == "__main__":

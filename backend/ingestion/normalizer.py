@@ -18,15 +18,11 @@ if _ROOT not in sys.path:
 import pandas as pd  # noqa: E402
 
 from backend.ingestion import pcap_parser, arinc_parser  # noqa: E402
+from backend.shared.paths import TRAFFIC_NORMALIZED_CSV  # noqa: E402
+from backend.shared.schema import UNIFIED_COLUMNS  # noqa: E402
 
 
-OUTPUT_PATH = "data/normalized/traffic_normalized.csv"
-
-UNIFIED_COLUMNS = [
-    "timestamp", "domain", "data_format", "src", "dst",
-    "packet_size", "frequency", "protocol", "port", "is_anomaly",
-    "cross_domain_flag", "port_anomaly_flag", "protocol_anomaly_flag",
-]
+OUTPUT_PATH = str(TRAFFIC_NORMALIZED_CSV)
 
 # ── Security flag constants ───────────────────────────────────────────────────
 

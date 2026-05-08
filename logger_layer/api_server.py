@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -14,11 +15,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from backend.shared.paths import RUNTIME_DEMO_OUTPUT_DIR
 from logger_layer.hash_chain_logger import DEFAULT_DB, HashChainLogger
 
 
 STATIC_DIR = PROJECT_ROOT / "UI_layer" / "logger_page"
-DEMO_OUTPUT_DIR = PROJECT_ROOT / "data" / "generated" / "logger_demo"
+DEMO_OUTPUT_DIR = RUNTIME_DEMO_OUTPUT_DIR / "logger_demo"
 
 
 class LoggerDemoHandler(SimpleHTTPRequestHandler):
@@ -98,19 +100,50 @@ class LoggerDemoHandler(SimpleHTTPRequestHandler):
         return {"ingested_entries": count, "source": str(source), "status": self.logger.integrity_panel()}
 
     def handle_demo(self, payload: dict[str, object]) -> dict[str, object]:
-        from demo.traffic_simulator import TrafficGenerator, load_scenario_yaml
+        from demo.traffic_simulator import TrafficGenerator, load_scenario_yaml, test_anomaly_detection
 
         scenario = str(payload.get("scenario", "normal"))
         duration = max(1, min(int(payload.get("duration", 3)), 30))
         output_dir = DEMO_OUTPUT_DIR / scenario
         scenario_config = load_scenario_yaml(scenario)
         TrafficGenerator(scenario_config, duration, output_dir).generate_all_domains()
-        count = self.logger.ingest_path(output_dir)
+        ai_results = {}
+        for csv_path in sorted(output_dir.glob("*.csv")):
+            if csv_path.stem.endswith("_labels") or csv_path.stem.endswith("_scores"):
+                continue
+            ai_results[csv_path.name] = test_anomaly_detection(csv_path)
+        artifacts = [
+            {
+                "path": str(path),
+                "bytes": path.stat().st_size,
+            }
+            for path in sorted(output_dir.glob("*"))
+            if path.is_file()
+        ]
+        manifest = {
+            "event": "combined_ai_logger_demo",
+            "scenario": scenario,
+            "duration": duration,
+            "created_at": datetime.now(UTC).isoformat(),
+            "output_dir": str(output_dir),
+            "ai_results": ai_results,
+            "artifacts": artifacts,
+        }
+        manifest_path = output_dir / "demo_manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2, default=str), encoding="utf-8")
+        entry_hash = self.logger.append_json(
+            manifest,
+            source_file=str(manifest_path),
+            source_type="DEMO_MANIFEST",
+            metadata={"ingest_mode": "demo_manifest"},
+        )
         return {
             "scenario": scenario,
             "duration": duration,
             "output_dir": str(output_dir),
-            "ingested_entries": count,
+            "ai_results": ai_results,
+            "ingested_entries": 1,
+            "entry_hash": entry_hash,
             "status": self.logger.integrity_panel(),
         }
 

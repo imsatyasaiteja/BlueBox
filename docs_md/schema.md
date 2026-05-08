@@ -67,3 +67,9 @@ additional fields before being handed to the logger to hash and store:
     data/raw/maintenance_traffic_labels.csv
     data/raw/afdx_traffic_labels.csv
     data/raw/arinc429_logs.csv
+
+## Derived data location
+
+    data/derived/normalized/traffic_normalized.csv
+    data/derived/scored/traffic_scored.csv
+    data/derived/explanations/anomaly_explanations.json

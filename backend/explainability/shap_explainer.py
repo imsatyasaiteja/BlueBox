@@ -19,7 +19,7 @@ Public API
       and explanation_text.
 
 Run as __main__ to batch-explain all anomalies in traffic_scored.csv and
-write data/explanations/anomaly_explanations.json.
+write data/derived/explanations/anomaly_explanations.json.
 """
 
 import json
@@ -38,27 +38,25 @@ if str(_ROOT) not in sys.path:
 
 from backend.detection.anomaly_model import (  # noqa: E402
     PCAP_DOMAINS,
-    _DOMAIN_TO_MODEL_NAME,
     _parity_valid,
     apply_pcap_zscores,
     build_arinc_features,
 )
+from backend.shared.model_artifacts import (  # noqa: E402
+    ARINC_MODEL_PATH,
+    ARINC_STATS_PATH,
+    PCAP_STATS_PATH,
+    pcap_model_path,
+)
+from backend.shared.paths import ANOMALY_EXPLANATIONS_JSON, TRAFFIC_SCORED_CSV  # noqa: E402
+from backend.shared.schema import ARINC_FEATURES, PCAP_FEATURES  # noqa: E402
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
-PROJECT_ROOT     = Path(__file__).resolve().parents[2]
-DATA_SCORED      = PROJECT_ROOT / "data" / "normalized" / "traffic_scored.csv"
-EXPLANATIONS_OUT = PROJECT_ROOT / "data" / "explanations" / "anomaly_explanations.json"
-MODELS_DIR       = PROJECT_ROOT / "models"
+DATA_SCORED = TRAFFIC_SCORED_CSV
+EXPLANATIONS_OUT = ANOMALY_EXPLANATIONS_JSON
 
 # ── Feature names ─────────────────────────────────────────────────────────────
-
-PCAP_FEATURES  = [
-    "packet_size", "frequency",
-    "packet_size_zscore", "frequency_zscore",
-    "cross_domain_flag", "port_anomaly_flag", "protocol_anomaly_flag",
-]
-ARINC_FEATURES = ["ssm_int", "parity_valid", "data_bits_zscore", "frequency"]
 
 # Identity mapping for PCAP features avoids sv_dict key collision between raw
 # and z-score names.  ARINC-specific features keep their existing aliases.
@@ -88,7 +86,7 @@ _ARINC_EXPLAINER  = None
 
 
 def _pcap_model_path(domain: str) -> Path:
-    return MODELS_DIR / f"isolation_forest_pcap_{domain}.pkl"
+    return pcap_model_path(domain)
 
 
 def _ensure_pcap_domain_loaded(domain: str) -> None:
@@ -102,14 +100,14 @@ def _ensure_pcap_domain_loaded(domain: str) -> None:
             model, feature_perturbation="tree_path_dependent"
         )
     if _PCAP_STATS is None:
-        _PCAP_STATS = json.loads((MODELS_DIR / "pcap_domain_stats.json").read_text())
+        _PCAP_STATS = json.loads(PCAP_STATS_PATH.read_text())
 
 
 def _ensure_arinc_loaded() -> None:
     global _ARINC_MODEL, _ARINC_STATS, _ARINC_EXPLAINER
     if _ARINC_MODEL is None:
-        _ARINC_MODEL    = joblib.load(MODELS_DIR / "isolation_forest_arinc.pkl")
-        _ARINC_STATS    = json.loads((MODELS_DIR / "arinc_label_stats.json").read_text())
+        _ARINC_MODEL    = joblib.load(ARINC_MODEL_PATH)
+        _ARINC_STATS    = json.loads(ARINC_STATS_PATH.read_text())
         _ARINC_EXPLAINER = shap.TreeExplainer(
             _ARINC_MODEL, feature_perturbation="tree_path_dependent"
         )

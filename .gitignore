@@ -3,19 +3,23 @@ bluebox-env/
 __pycache__/
 
 data/generated/
-data/scored/
+data/derived/
 demo/logs/
 logger_layer_server.*.log
 *.log
 
-logger_layer/keys/*.json
-logger_layer/recovery_ledger/*.jsonl
-logger_layer/sqlite_db/*.db
-logger_layer/sqlite_db/*.db-*
-logger_layer/sqlite_db/*.jsonl
-logger_layer/sqlite_db/*.compromised.*
+runtime/config/keys/*.json
+runtime/evidence/demo_output/
+runtime/evidence/**/*.db
+runtime/evidence/**/*.db-wal
+runtime/evidence/**/*.db-shm
+runtime/evidence/**/*.db-journal
+runtime/evidence/**/*.db-*
+runtime/evidence/**/*.jsonl
+runtime/evidence/**/*.compromised.*
 
-!logger_layer/recovery_ledger/.gitkeep
-!logger_layer/sqlite_db/.gitkeep
+!runtime/config/keys/.gitkeep
+!runtime/evidence/sqlite/.gitkeep
+!runtime/evidence/recovery_ledger/.gitkeep
 
 assets/

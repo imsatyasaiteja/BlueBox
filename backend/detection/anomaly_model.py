@@ -1,9 +1,9 @@
 """
-BlueBox anomaly detection — per-domain Isolation Forest architecture.
+BlueBox anomaly detection: per-domain Isolation Forest architecture.
 
 Three per-domain PCAP models (one per network domain) plus one ARINC429 model:
 
-  PCAP models  — one per domain, trained only on that domain's rows:
+  PCAP models - one per domain, trained only on that domain's rows:
     models/isolation_forest_pcap_cabin.pkl
     models/isolation_forest_pcap_maintenance.pkl
     models/isolation_forest_pcap_afdx.pkl
@@ -34,7 +34,12 @@ The public entry point for the FastAPI /predict endpoint is score_event().
 """
 
 import json
+import sys
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import joblib
 import numpy as np
@@ -42,33 +47,28 @@ import pandas as pd
 from sklearn.ensemble import IsolationForest
 from sklearn.metrics import classification_report, confusion_matrix
 
+from backend.shared.model_artifacts import (
+    ARINC_MODEL_PATH,
+    ARINC_STATS_PATH,
+    DOMAIN_TO_MODEL_NAME,
+    PCAP_STATS_PATH,
+    pcap_model_path,
+)
+from backend.shared.paths import (
+    ARINC_RAW_CSV,
+    MODELS_DIR,
+    TRAFFIC_NORMALIZED_CSV,
+    TRAFFIC_SCORED_CSV,
+)
+from backend.shared.schema import PCAP_DOMAINS, PCAP_FEATURES
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DATA_IN      = PROJECT_ROOT / "data" / "normalized" / "traffic_normalized.csv"
-DATA_OUT     = PROJECT_ROOT / "data" / "normalized" / "traffic_scored.csv"
-ARINC_RAW    = PROJECT_ROOT / "data" / "raw" / "arinc429_logs.csv"
-MODELS_DIR   = PROJECT_ROOT / "models"
-
-ARINC_MODEL_PATH = MODELS_DIR / "isolation_forest_arinc.pkl"
-PCAP_STATS_PATH  = MODELS_DIR / "pcap_domain_stats.json"
-ARINC_STATS_PATH = MODELS_DIR / "arinc_label_stats.json"
-
-# Canonical domain values as they appear in traffic_normalized.csv.
-PCAP_DOMAINS = ["cabin", "maintenance", "afdx"]
+DATA_IN = TRAFFIC_NORMALIZED_CSV
+DATA_OUT = TRAFFIC_SCORED_CSV
+ARINC_RAW = ARINC_RAW_CSV
 
 # Model filename suffix == domain name (identity mapping; kept as a dict so
 # _pcap_model_path stays a single, testable indirection point).
-_DOMAIN_TO_MODEL_NAME = {
-    "cabin":       "cabin",
-    "maintenance": "maintenance",
-    "afdx":        "afdx",
-}
-
-PCAP_FEATURES = [
-    "packet_size", "frequency",
-    "packet_size_zscore", "frequency_zscore",
-    "cross_domain_flag", "port_anomaly_flag", "protocol_anomaly_flag",
-]
+_DOMAIN_TO_MODEL_NAME = DOMAIN_TO_MODEL_NAME
 
 SEVERITY_THRESHOLDS = [(-0.1, "HIGH"), (0.0, "MEDIUM"), (0.05, "LOW")]
 
@@ -81,7 +81,7 @@ _ARINC_STATS = None
 
 
 def _pcap_model_path(domain: str) -> Path:
-    return MODELS_DIR / f"isolation_forest_pcap_{_DOMAIN_TO_MODEL_NAME[domain]}.pkl"
+    return pcap_model_path(domain)
 
 
 def _ensure_arinc_loaded() -> None:

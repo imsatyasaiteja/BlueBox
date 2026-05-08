@@ -23,12 +23,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 try:
     from backend.detection.anomaly_model import score_event
+    from backend.shared.paths import RUNTIME_DEMO_OUTPUT_DIR
 except ImportError:
     score_event = None
+    RUNTIME_DEMO_OUTPUT_DIR = PROJECT_ROOT / "runtime" / "evidence" / "demo_output"
 
 
 DEFAULT_SCENARIO_DIR = PROJECT_ROOT / "demo" / "attack_scenarios"
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "generated"
+DEFAULT_OUTPUT_DIR = RUNTIME_DEMO_OUTPUT_DIR
 SCENARIOS = (
     "normal",
     "lateral_movement",
@@ -83,6 +85,19 @@ DOMAINS = (
         csv_name="maintenance_traffic.csv",
     ),
     DomainConfig(
+        name="afdx",
+        data_format="PCAP",
+        ip_prefix="10.0",
+        ip_octets=2,
+        protocol="udp",
+        ports=(),
+        port_range=(7000, 8000),
+        packet_size=74,
+        frequency=200,
+        pcap_name="afdx_traffic.pcap",
+        csv_name="afdx_traffic.csv",
+    ),
+    DomainConfig(
         name="avionics",
         data_format="ARINC429",
         ip_prefix="10.0",
@@ -96,6 +111,13 @@ DOMAINS = (
         csv_name="avionics_traffic_arinc429.csv",
     ),
 )
+
+DOMAIN_NETWORKS = {
+    "cabin": ("192.168.1", 3),
+    "maintenance": ("192.168.2", 3),
+    "afdx": ("10.0", 2),
+}
+SENSITIVE_PORTS = (23, 502, 2404, 161)
 
 
 @dataclass
@@ -133,15 +155,43 @@ def random_ip(prefix: str, octets: int) -> str:
 
 
 def adjusted_packet_size(domain: DomainConfig, anomaly_type: str | None) -> int:
-    if anomaly_type in {"command_injection", "data_injection", "data_exfiltration"}:
+    if anomaly_type in {
+        "command_injection",
+        "control_surface_tampering",
+        "data_injection",
+        "data_exfiltration",
+    }:
         return max(domain.packet_size * 3, 5000)
     return domain.packet_size
 
 
 def adjusted_frequency(domain: DomainConfig, anomaly_type: str | None) -> int:
-    if anomaly_type in {"burst_traffic", "network_scan", "replay_attack"}:
+    if anomaly_type in {
+        "burst_traffic",
+        "network_scan",
+        "replay_attack",
+        "command_duplication",
+        "sequence_violation",
+    }:
         return domain.frequency * 5
     return domain.frequency
+
+
+def _other_domain_ip(domain: DomainConfig) -> str:
+    choices = [
+        (prefix, octets)
+        for name, (prefix, octets) in DOMAIN_NETWORKS.items()
+        if name != domain.name
+    ]
+    prefix, octets = random.choice(choices)
+    return random_ip(prefix, octets)
+
+
+def _expected_port(domain: DomainConfig) -> int:
+    if domain.protocol == "tcp":
+        return random.choice(domain.ports)
+    low, high = domain.port_range or (1024, 65535)
+    return random.randint(low, high)
 
 
 def generate_pcap_record(
@@ -152,16 +202,26 @@ def generate_pcap_record(
     src_port = random.randint(1024, 65535)
     packet_size = adjusted_packet_size(domain, anomaly_type if anomaly else None)
     frequency = adjusted_frequency(domain, anomaly_type if anomaly else None)
+    cross_domain_flag = 0
+    port_anomaly_flag = 0
+    protocol_anomaly_flag = 0
+
+    if anomaly and anomaly_type == "lateral_movement":
+        dst_ip = _other_domain_ip(domain)
+        cross_domain_flag = 1
+
+    if anomaly and anomaly_type in {"command_injection", "control_surface_tampering"}:
+        dst_port = random.choice(SENSITIVE_PORTS)
+        port_anomaly_flag = 1
+    else:
+        dst_port = _expected_port(domain)
 
     if domain.protocol == "tcp":
-        dst_port = random.choice(domain.ports)
         transport = TCP(sport=src_port, dport=dst_port)
     else:
-        low, high = domain.port_range or (1024, 65535)
-        dst_port = random.randint(low, high)
         transport = UDP(sport=src_port, dport=dst_port)
 
-    payload_len = max(packet_size - 54, 1)
+    payload_len = max(packet_size, 1)
     packet = (
         Ether(src="02:00:00:00:00:01", dst="02:00:00:00:00:02")
         / IP(src=src_ip, dst=dst_ip)
@@ -176,10 +236,16 @@ def generate_pcap_record(
         "protocol": domain.protocol,
         "src_ip": src_ip,
         "dst_ip": dst_ip,
+        "src": src_ip,
+        "dst": dst_ip,
         "src_port": src_port,
         "dst_port": dst_port,
-        "packet_size": len(packet),
+        "port": dst_port,
+        "packet_size": payload_len,
         "frequency": frequency,
+        "cross_domain_flag": cross_domain_flag,
+        "port_anomaly_flag": port_anomaly_flag,
+        "protocol_anomaly_flag": protocol_anomaly_flag,
         "is_anomaly": int(anomaly),
         "anomaly_type": anomaly_type if anomaly else "none",
     }
@@ -194,7 +260,7 @@ def generate_arinc_record(anomaly: bool, anomaly_type: str | None) -> dict[str, 
     label = random.choice(("203", "206", "360"))
     label_int = int(label, 8)
     data_bits_int = random.randint(0, (1 << 19) - 1)
-    if anomaly and anomaly_type in {"command_injection", "data_injection"}:
+    if anomaly and anomaly_type in {"command_injection", "control_surface_tampering", "data_injection"}:
         data_bits_int = random.randint((1 << 18), (1 << 19) - 1)
 
     ssm_bits = "00" if anomaly else "11"
@@ -204,7 +270,8 @@ def generate_arinc_record(anomaly: bool, anomaly_type: str | None) -> dict[str, 
     parity = odd_parity_bit(payload31)
     word = (parity << 31) | payload31
 
-    if anomaly and anomaly_type in {"replay_attack", "bit_flip"}:
+    if anomaly and anomaly_type in {"replay_attack", "bit_flip", "data_injection"}:
+        # Flip an odd number of observable bits so parity_valid=0 is visible.
         word ^= 0x1
 
     return {
@@ -265,6 +332,7 @@ class TrafficGenerator:
         interval = 1.0 / domain.frequency
         packets: list[Any] = []
         records: list[dict[str, Any]] = []
+        label_rows: list[dict[str, Any]] = []
         metrics = DomainMetrics(domain=domain.name)
 
         while True:
@@ -287,17 +355,29 @@ class TrafficGenerator:
                 record = generate_arinc_record(anomaly, anomaly_type)
 
             records.append(record)
+            if domain.data_format == "PCAP":
+                label_rows.append(
+                    {
+                        "packet_index": len(records) - 1,
+                        "is_anomaly": record["is_anomaly"],
+                        "anomaly_type": record["anomaly_type"],
+                    }
+                )
             metrics.records += 1
             metrics.anomaly_records += int(anomaly)
             metrics.normal_records += int(not anomaly)
             next_record_time += interval
 
         metrics.duration_sec = time.monotonic() - start_time
-        self.write_outputs(domain, packets, records)
+        self.write_outputs(domain, packets, records, label_rows)
         return metrics
 
     def write_outputs(
-        self, domain: DomainConfig, packets: list[Any], records: list[dict[str, Any]]
+        self,
+        domain: DomainConfig,
+        packets: list[Any],
+        records: list[dict[str, Any]],
+        label_rows: list[dict[str, Any]],
     ) -> None:
         if packets and domain.pcap_name:
             pcap_path = self.output_dir / domain.pcap_name
@@ -311,6 +391,14 @@ class TrafficGenerator:
                 writer.writeheader()
                 writer.writerows(records)
             LOGGER.info("Wrote %s (%d records)", csv_path, len(records))
+
+        if label_rows and domain.pcap_name:
+            label_path = self.output_dir / f"{Path(domain.pcap_name).stem}_labels.csv"
+            with label_path.open("w", newline="", encoding="utf-8") as file:
+                writer = csv.DictWriter(file, fieldnames=label_rows[0].keys())
+                writer.writeheader()
+                writer.writerows(label_rows)
+            LOGGER.info("Wrote %s (%d labels)", label_path, len(label_rows))
 
     def generate_all_domains(self) -> list[DomainMetrics]:
         scenario_name = self.scenario.get("name", "unknown")
@@ -340,6 +428,9 @@ def event_from_record(record: dict[str, str]) -> dict[str, Any]:
         "domain": record["domain"],
         "packet_size": float(record["packet_size"]),
         "frequency": float(record["frequency"]),
+        "cross_domain_flag": int(record.get("cross_domain_flag", 0)),
+        "port_anomaly_flag": int(record.get("port_anomaly_flag", 0)),
+        "protocol_anomaly_flag": int(record.get("protocol_anomaly_flag", 0)),
     }
 
 
@@ -466,7 +557,7 @@ def main() -> int:
 
         if args.test:
             for csv_path in sorted(output_dir.glob("*.csv")):
-                if csv_path.stem.endswith("_scores"):
+                if csv_path.stem.endswith("_scores") or csv_path.stem.endswith("_labels"):
                     continue
                 test_anomaly_detection(csv_path)
 

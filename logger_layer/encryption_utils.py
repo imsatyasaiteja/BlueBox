@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 
+from backend.shared.paths import RUNTIME_KEYS_DIR
+
 
 try:
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -19,7 +21,7 @@ else:
     AESGCM_IMPORT_ERROR = None
 
 
-DEFAULT_DATA_KEY = Path(__file__).resolve().parent / "keys" / "logger_data_key.json"
+DEFAULT_DATA_KEY = RUNTIME_KEYS_DIR / "logger_data_key.json"
 ALGORITHM = "AES-256-GCM"
 LEGACY_ALGORITHM = "BLUEBOX-HKDF-SHA256-STREAM-HMAC-SHA256"
 KEY_BYTES = 32

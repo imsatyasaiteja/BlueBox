@@ -14,6 +14,8 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Iterable, Iterator, TypedDict
 
+from backend.shared.paths import RUNTIME_KEYS_DIR, RUNTIME_RECOVERY_LEDGER_DIR, RUNTIME_SQLITE_DIR
+
 try:
     from logger_layer.encryption_utils import (
         DEFAULT_DATA_KEY,
@@ -44,12 +46,10 @@ except ModuleNotFoundError:
 
 GENESIS_HASH = "0" * 64
 RECORD_VERSION = 3
-DEFAULT_DB = Path(__file__).resolve().parent / "sqlite_db" / "bluebox_log.db"
-DEFAULT_RECOVERY_LEDGER = (
-    Path(__file__).resolve().parent / "recovery_ledger" / "bluebox_recovery.jsonl"
-)
-DEFAULT_PRIVATE_KEY = Path(__file__).resolve().parent / "keys" / "logger_private.json"
-DEFAULT_PUBLIC_KEY = Path(__file__).resolve().parent / "keys" / "logger_public.json"
+DEFAULT_DB = RUNTIME_SQLITE_DIR / "bluebox_log.db"
+DEFAULT_RECOVERY_LEDGER = RUNTIME_RECOVERY_LEDGER_DIR / "bluebox_recovery.jsonl"
+DEFAULT_PRIVATE_KEY = RUNTIME_KEYS_DIR / "logger_private.json"
+DEFAULT_PUBLIC_KEY = RUNTIME_KEYS_DIR / "logger_public.json"
 PCAP_CHUNK_BYTES = 64 * 1024
 RESERVED_METADATA_KEYS = {
     "record_version",

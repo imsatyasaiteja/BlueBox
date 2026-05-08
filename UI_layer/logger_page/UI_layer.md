@@ -19,9 +19,13 @@ http://127.0.0.1:8080
 - Append a JSON event into the encrypted hash chain.
 - Ingest CSV/PCAP files from a path.
 - Generate demo traffic and ingest it.
+- Score generated demo traffic with the backend anomaly models before ingestion.
+- Append a signed demo manifest with AI metrics and generated artifact paths.
 - Verify hashes, RSA signatures, encrypted payload authentication, and anchors.
 - Simulate blocked SQLite delete/update attempts.
 - Inspect decrypted payloads for selected entries.
+
+Runtime databases, ledgers, keys, and generated demo files live under `runtime/`.
 
 ## Tamper Attempt Buttons
 

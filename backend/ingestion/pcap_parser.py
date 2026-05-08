@@ -11,22 +11,18 @@ sidecar label CSV and emits a DataFrame in the unified schema:
 """
 
 import os
+import sys
 
 import pandas as pd
 from scapy.all import IP, TCP, UDP, ICMP, Raw, rdpcap
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.abspath(os.path.join(_HERE, "..", ".."))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
-# (domain_label, pcap_path, label_csv_path)
-DOMAIN_FILES = [
-    ("cabin",       "data/raw/cabin_traffic.pcap",       "data/raw/cabin_traffic_labels.csv"),
-    ("maintenance", "data/raw/maintenance_traffic.pcap", "data/raw/maintenance_traffic_labels.csv"),
-    ("afdx",        "data/raw/afdx_traffic.pcap",        "data/raw/afdx_traffic_labels.csv"),
-]
-
-UNIFIED_COLUMNS = [
-    "timestamp", "domain", "data_format", "src", "dst",
-    "packet_size", "frequency", "protocol", "port", "is_anomaly",
-]
+from backend.shared.paths import PCAP_DOMAIN_FILES
+from backend.shared.schema import BASE_EVENT_COLUMNS
 
 
 def _protocol_of(pkt) -> str:
@@ -104,12 +100,12 @@ def parse_pcap(pcap_path: str, labels_csv_path: str, domain: str) -> pd.DataFram
 
     df = pd.DataFrame(rows)
     df["frequency"] = _local_pps_per_domain(df)
-    return df[UNIFIED_COLUMNS]
+    return df[BASE_EVENT_COLUMNS]
 
 
 def parse_all() -> pd.DataFrame:
     """Parse all three domain PCAPs and concatenate."""
-    frames = [parse_pcap(p, l, d) for d, p, l in DOMAIN_FILES]
+    frames = [parse_pcap(str(p), str(l), d) for d, p, l in PCAP_DOMAIN_FILES]
     return pd.concat(frames, ignore_index=True)
 
 
