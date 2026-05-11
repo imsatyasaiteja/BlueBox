@@ -527,7 +527,7 @@ function renderEntries(entries, emptyMessage = "No trusted entries available.") 
       <td><span class="badge ${typeClass}">${entry.source_type}</span></td>
       <td>${entry.source_offset}</td>
       <td>${entry.ingest_mode || "-"}</td>
-      <td>${entry.source_file || "-"}</td>
+      <td class="hash-cell" title="${entry.entry_hash}">${shortHash(entry.entry_hash)}</td>
       <td><button class="ghost" data-sequence="${entry.sequence}">Open</button></td>
     `;
     tbody.appendChild(row);
@@ -618,6 +618,45 @@ function notifyDemoRun() {
   } catch {
     // Storage can be unavailable in hardened browser profiles; periodic refresh still works.
   }
+}
+
+function renderReplaySteps(items) {
+  const list = $("replaySteps");
+  if (!list) return;
+  list.replaceChildren();
+  const steps = [
+    {
+      title: "Verify evidence chain",
+      text: items.length ? `${items.length} trusted entries loaded after chain and ledger verification.` : "Waiting for trusted entries.",
+      state: items.length ? "complete" : "pending",
+    },
+    {
+      title: "Identify suspicious path",
+      text: items.some((item) => Number(item.predicted_anomaly))
+        ? "Anomalous sequence found in replay timeline."
+        : "No anomalous replay step is attached yet.",
+      state: items.some((item) => Number(item.predicted_anomaly)) ? "alert" : "pending",
+    },
+    {
+      title: "Inspect raw evidence",
+      text: "Open any trusted entry below to decrypt the raw payload and confirm source identity.",
+      state: "ready",
+    },
+    {
+      title: "Export incident context",
+      text: "Use the evidence stream and viewer to walk through the trusted payload trail.",
+      state: "ready",
+    },
+  ];
+  steps.forEach((step, index) => {
+    const node = document.createElement("div");
+    node.className = `step-card ${step.state}`;
+    node.innerHTML = `
+      <span>${index + 1}</span>
+      <div><strong>${step.title}</strong><p>${step.text}</p></div>
+    `;
+    list.appendChild(node);
+  });
 }
 
 function graphNodeAt(canvas, event) {
@@ -822,7 +861,7 @@ function drawReplayMix(items) {
   ctx.fillStyle = "#03101b";
   ctx.fillRect(0, 0, width, height);
   const counts = items.reduce((acc, item) => {
-    const key = item.service || item.target_component || item.source_type || "UNKNOWN";
+    const key = item.source_type || "UNKNOWN";
     acc[key] = (acc[key] || 0) + 1;
     return acc;
   }, {});
