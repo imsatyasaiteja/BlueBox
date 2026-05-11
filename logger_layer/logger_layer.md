@@ -2,7 +2,9 @@
 
 This layer is the tamper-evident and recoverable logger for BlueBox. It stores raw records in SQLite as AES-256-GCM encrypted payloads, links every record into a SHA-256 hash chain, signs every entry hash with RSA, writes signed head anchors, and mirrors encrypted rows into a signed append-only recovery ledger.
 
-AI explainability is not part of this layer.
+AI outputs are attached after scoring as compact sidecar evidence. The logger does
+not rewrite trained models, scored CSVs, generated datasets, or aircraft log
+payloads.
 
 ## Files
 
@@ -18,7 +20,9 @@ runtime/
 |-- config/keys/            # Development keys, ignored by git
 `-- evidence/
     |-- sqlite/             # SQLite evidence stores and anchors, ignored by git
-    |-- recovery_ledger/    # Signed append-only recovery ledgers, ignored by git
+runtime/trust_boundary/
+    |-- recovery_ledger/    # Signed append-only recovery copy, ignored by git
+    |-- ai_evidence_ledger/ # Signed AI evidence checkpoints, ignored by git
     `-- demo_output/        # Generated demo traffic, ignored by git
 ```
 
@@ -29,7 +33,8 @@ The logger creates these files automatically when first used:
 ```text
 runtime/evidence/sqlite/bluebox_log.db
 runtime/evidence/sqlite/bluebox_log.db.anchors.jsonl
-runtime/evidence/recovery_ledger/bluebox_recovery.jsonl
+runtime/trust_boundary/recovery_ledger/bluebox_recovery.jsonl
+runtime/trust_boundary/ai_evidence_ledger/bluebox_ai_evidence.jsonl
 runtime/config/keys/logger_private.json
 runtime/config/keys/logger_public.json
 runtime/config/keys/logger_data_key.json
@@ -53,6 +58,15 @@ Ingest raw project data:
 .\bluebox-env\Scripts\python.exe -m logger_layer.hash_chain_logger ingest .\data\raw
 ```
 
+Look up the stable identity for one ingested CSV row:
+
+```powershell
+.\bluebox-env\Scripts\python.exe -m logger_layer.hash_chain_logger lookup .\data\raw\arinc429_logs.csv 0
+```
+
+The lookup returns `source_file`, `source_offset`, SQLite `sequence`, and
+`entry_hash`. Those fields are the join basis for AI evidence.
+
 Initialize and verify the recovery ledger:
 
 ```powershell
@@ -64,6 +78,12 @@ Verify the hash chain:
 
 ```powershell
 .\bluebox-env\Scripts\python.exe -m logger_layer.hash_chain_logger verify
+```
+
+Verify the compact AI evidence checkpoint ledger:
+
+```powershell
+.\bluebox-env\Scripts\python.exe -m logger_layer.hash_chain_logger verify-ai-evidence-ledger
 ```
 
 View a compact status panel:
@@ -84,6 +104,54 @@ Decrypt one entry for inspection:
 .\bluebox-env\Scripts\python.exe -m logger_layer.hash_chain_logger entry 1
 ```
 
+## End-to-End AI Evidence Test
+
+Use a disposable database so you can test without changing the default
+`bluebox_log.db`:
+
+```powershell
+.\bluebox-env\Scripts\python.exe -m logger_layer.hash_chain_logger --db .\runtime\evidence\sqlite\ai_test.db --recovery-ledger .\runtime\trust_boundary\recovery_ledger\ai_test_recovery.jsonl --ai-evidence-ledger .\runtime\trust_boundary\ai_evidence_ledger\ai_test_ai.jsonl ingest .\data\raw\arinc429_logs.csv
+```
+
+Score a CSV with the existing AI layer:
+
+```powershell
+.\bluebox-env\Scripts\python.exe -c "from demo.traffic_simulator import test_anomaly_detection; test_anomaly_detection(r'.\data\raw\arinc429_logs.csv', r'.\runtime\evidence\demo_output\arinc429_logs_scores.csv')"
+```
+
+Attach compact AI results back to the logged raw rows. This creates sidecar
+records and a signed Merkle batch checkpoint:
+
+```powershell
+.\bluebox-env\Scripts\python.exe -m logger_layer.hash_chain_logger --db .\runtime\evidence\sqlite\ai_test.db --recovery-ledger .\runtime\trust_boundary\recovery_ledger\ai_test_recovery.jsonl --ai-evidence-ledger .\runtime\trust_boundary\ai_evidence_ledger\ai_test_ai.jsonl attach-ai-evidence .\data\raw\arinc429_logs.csv .\runtime\evidence\demo_output\arinc429_logs_scores.csv
+```
+
+Verify all integrity material:
+
+```powershell
+.\bluebox-env\Scripts\python.exe -m logger_layer.hash_chain_logger --db .\runtime\evidence\sqlite\ai_test.db --recovery-ledger .\runtime\trust_boundary\recovery_ledger\ai_test_recovery.jsonl --ai-evidence-ledger .\runtime\trust_boundary\ai_evidence_ledger\ai_test_ai.jsonl verify
+.\bluebox-env\Scripts\python.exe -m logger_layer.hash_chain_logger --db .\runtime\evidence\sqlite\ai_test.db --recovery-ledger .\runtime\trust_boundary\recovery_ledger\ai_test_recovery.jsonl --ai-evidence-ledger .\runtime\trust_boundary\ai_evidence_ledger\ai_test_ai.jsonl verify-ai-evidence-ledger
+.\bluebox-env\Scripts\python.exe -m logger_layer.hash_chain_logger --db .\runtime\evidence\sqlite\ai_test.db --recovery-ledger .\runtime\trust_boundary\recovery_ledger\ai_test_recovery.jsonl --ai-evidence-ledger .\runtime\trust_boundary\ai_evidence_ledger\ai_test_ai.jsonl panel
+```
+
+Expected files:
+
+```text
+runtime/evidence/sqlite/ai_test.db
+runtime/evidence/sqlite/ai_test.db.anchors.jsonl
+runtime/trust_boundary/recovery_ledger/ai_test_recovery.jsonl
+runtime/trust_boundary/ai_evidence_ledger/ai_test_ai.jsonl
+runtime/evidence/demo_output/arinc429_logs_scores.csv
+runtime/config/keys/logger_private.json
+runtime/config/keys/logger_public.json
+runtime/config/keys/logger_data_key.json
+```
+
+`ai_test.db` contains raw encrypted rows, `bluebox_correlation_map`,
+`ai_evidence_records`, and `ai_evidence_checkpoints`. The recovery JSONL is the
+full encrypted recovery copy. The AI JSONL is only a compact signed Merkle
+checkpoint ledger.
+
 ## Web Demo
 
 Start the local logger dashboard:
@@ -98,7 +166,10 @@ Open:
 http://127.0.0.1:8080
 ```
 
-The dashboard can append manual events, ingest files, generate demo traffic, verify the hash chain, anchor the current chain head, initialize and restore from the recovery ledger, simulate blocked SQLite tamper attempts, and inspect recent entries.
+The analyst dashboard verifies the hash chain, anchors the current chain head,
+initializes and restores from the recovery ledger, displays AI evidence, and
+inspects recent trusted entries. Attacker-style tamper attempts are run from CLI
+or API commands outside the UI.
 
 ## Tamper Attempt Behavior
 
@@ -117,30 +188,30 @@ For production, copy the recovery ledger and latest anchor to a separate trust b
 Use a disposable database for destructive tests:
 
 ```powershell
-.\bluebox-env\Scripts\python.exe -m logger_layer.hash_chain_logger --db .\runtime\evidence\sqlite\tamper_test.db --recovery-ledger .\runtime\evidence\recovery_ledger\tamper_test.jsonl ingest .\data\raw\arinc429_logs.csv
+.\bluebox-env\Scripts\python.exe -m logger_layer.hash_chain_logger --db .\runtime\evidence\sqlite\tamper_test.db --recovery-ledger .\runtime\trust_boundary\recovery_ledger\tamper_test.jsonl ingest .\data\raw\arinc429_logs.csv
 ```
 
-Bypass the append-only triggers and delete a middle row:
+Bypass the append-only triggers and corrupt a row:
 
 ```powershell
-.\bluebox-env\Scripts\python.exe -c "import sqlite3; c=sqlite3.connect(r'runtime\evidence\sqlite\tamper_test.db'); c.execute('DROP TRIGGER IF EXISTS prevent_log_update'); c.execute('DROP TRIGGER IF EXISTS prevent_log_delete'); c.execute('DELETE FROM log_entries WHERE sequence=10'); c.commit()"
+.\bluebox-env\Scripts\python.exe -m logger_layer.hash_chain_logger --db .\runtime\evidence\sqlite\tamper_test.db --recovery-ledger .\runtime\trust_boundary\recovery_ledger\tamper_test.jsonl force-corrupt update --actor attacker-cli
 ```
 
 Verify again:
 
 ```powershell
-.\bluebox-env\Scripts\python.exe -m logger_layer.hash_chain_logger --db .\runtime\evidence\sqlite\tamper_test.db --recovery-ledger .\runtime\evidence\recovery_ledger\tamper_test.jsonl verify
+.\bluebox-env\Scripts\python.exe -m logger_layer.hash_chain_logger --db .\runtime\evidence\sqlite\tamper_test.db --recovery-ledger .\runtime\trust_boundary\recovery_ledger\tamper_test.jsonl verify
 ```
 
 Restore from the recovery ledger:
 
 ```powershell
-.\bluebox-env\Scripts\python.exe -m logger_layer.hash_chain_logger --db .\runtime\evidence\sqlite\tamper_test.db --recovery-ledger .\runtime\evidence\recovery_ledger\tamper_test.jsonl restore-ledger --reason successful_sqlite_delete_sequence_10 --actor analyst
+.\bluebox-env\Scripts\python.exe -m logger_layer.hash_chain_logger --db .\runtime\evidence\sqlite\tamper_test.db --recovery-ledger .\runtime\trust_boundary\recovery_ledger\tamper_test.jsonl restore-ledger --reason forced_sqlite_corruption_demo --actor analyst
 ```
 
 Delete the disposable database after the test:
 
 ```powershell
 Remove-Item .\runtime\evidence\sqlite\tamper_test.db*
-Remove-Item .\runtime\evidence\recovery_ledger\tamper_test.jsonl
+Remove-Item .\runtime\trust_boundary\recovery_ledger\tamper_test.jsonl
 ```
