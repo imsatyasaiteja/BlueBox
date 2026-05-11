@@ -52,14 +52,29 @@ function toast(message) {
   toast.timer = window.setTimeout(() => node.classList.remove("show"), 3000);
 }
 
-function shortHash(value) {
-  if (!value || value === "-") return "-";
-  return `${value.slice(0, 12)}...${value.slice(-12)}`;
+const SENSITIVE_DISPLAY_KEY = /hash|digest|signature|cipher|encrypt|algorithm|nonce|salt|secret|private|public|(^|_)(iv|key)($|_)|(^|_)sha(?:1|224|256|384|512|_?\d+)($|_)/i;
+const SENSITIVE_DISPLAY_VALUE = /\b[a-f0-9]{32,}\b/i;
+
+function analystSafeValue(value) {
+  if (Array.isArray(value)) return value.map(analystSafeValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => !SENSITIVE_DISPLAY_KEY.test(key))
+        .map(([key, item]) => [key, analystSafeValue(item)]),
+    );
+  }
+  if (typeof value === "string" && SENSITIVE_DISPLAY_VALUE.test(value)) return "[redacted]";
+  return value;
+}
+
+function formatJsonForAnalyst(value) {
+  return JSON.stringify(analystSafeValue(value), null, 2);
 }
 
 function formatFailure(value) {
   if (!value) return "none";
-  return JSON.stringify(value, null, 2);
+  return formatJsonForAnalyst(value);
 }
 
 function chainFailed(status) {
@@ -527,7 +542,7 @@ function renderEntries(entries, emptyMessage = "No trusted entries available.") 
       <td><span class="badge ${typeClass}">${entry.source_type}</span></td>
       <td>${entry.source_offset}</td>
       <td>${entry.ingest_mode || "-"}</td>
-      <td class="hash-cell" title="${entry.entry_hash}">${shortHash(entry.entry_hash)}</td>
+      <td>${entry.source_file || "-"}</td>
       <td><button class="ghost" data-sequence="${entry.sequence}">Open</button></td>
     `;
     tbody.appendChild(row);
@@ -618,45 +633,6 @@ function notifyDemoRun() {
   } catch {
     // Storage can be unavailable in hardened browser profiles; periodic refresh still works.
   }
-}
-
-function renderReplaySteps(items) {
-  const list = $("replaySteps");
-  if (!list) return;
-  list.replaceChildren();
-  const steps = [
-    {
-      title: "Verify evidence chain",
-      text: items.length ? `${items.length} trusted entries loaded after chain and ledger verification.` : "Waiting for trusted entries.",
-      state: items.length ? "complete" : "pending",
-    },
-    {
-      title: "Identify suspicious path",
-      text: items.some((item) => Number(item.predicted_anomaly))
-        ? "Anomalous sequence found in replay timeline."
-        : "No anomalous replay step is attached yet.",
-      state: items.some((item) => Number(item.predicted_anomaly)) ? "alert" : "pending",
-    },
-    {
-      title: "Inspect raw evidence",
-      text: "Open any trusted entry below to decrypt the raw payload and confirm source identity.",
-      state: "ready",
-    },
-    {
-      title: "Export incident context",
-      text: "Use the evidence stream and viewer to walk through the trusted payload trail.",
-      state: "ready",
-    },
-  ];
-  steps.forEach((step, index) => {
-    const node = document.createElement("div");
-    node.className = `step-card ${step.state}`;
-    node.innerHTML = `
-      <span>${index + 1}</span>
-      <div><strong>${step.title}</strong><p>${step.text}</p></div>
-    `;
-    list.appendChild(node);
-  });
 }
 
 function graphNodeAt(canvas, event) {
@@ -861,7 +837,7 @@ function drawReplayMix(items) {
   ctx.fillStyle = "#03101b";
   ctx.fillRect(0, 0, width, height);
   const counts = items.reduce((acc, item) => {
-    const key = item.source_type || "UNKNOWN";
+    const key = item.service || item.target_component || item.source_type || "UNKNOWN";
     acc[key] = (acc[key] || 0) + 1;
     return acc;
   }, {});
@@ -907,7 +883,7 @@ async function runAction(label, fn) {
 async function openEntry(sequence) {
   await runAction(`Opened entry ${sequence}`, async () => {
     const entry = await api(`/api/entry/${sequence}`);
-    setText("entryDetail", JSON.stringify(entry, null, 2));
+    setText("entryDetail", formatJsonForAnalyst(entry));
   });
 }
 
@@ -978,7 +954,7 @@ function bindActions() {
   on("verify", "click", () =>
     runAction("Chain verified", async () => {
       const result = await api("/api/verify", { method: "POST", body: "{}" });
-      setText("ledgerResult", JSON.stringify(result, null, 2));
+      setText("ledgerResult", formatJsonForAnalyst(result));
     })
   );
   on("anchor", "click", () =>
@@ -987,15 +963,15 @@ function bindActions() {
   on("verifyLedger", "click", () =>
     runAction("Recovery ledger verified", async () => {
       const result = await api("/api/verify-ledger", { method: "POST", body: "{}" });
-      setText("ledgerResult", JSON.stringify(result, null, 2));
+      setText("ledgerResult", formatJsonForAnalyst(result));
     })
   );
-  // on("initLedger", "click", () =>
-  //   runAction("Recovery ledger initialized", async () => {
-  //     const result = await api("/api/init-ledger", { method: "POST", body: "{}" });
-  //     setText("ledgerResult", JSON.stringify(result, null, 2));
-  //   })
-  // );
+  on("initLedger", "click", () =>
+    runAction("Recovery ledger initialized", async () => {
+      const result = await api("/api/init-ledger", { method: "POST", body: "{}" });
+      setText("ledgerResult", formatJsonForAnalyst(result));
+    })
+  );
   on("restoreLedger", "click", () =>
     runAction("SQLite restored from ledger", async () => {
       const result = await api("/api/restore-ledger", {
@@ -1005,7 +981,7 @@ function bindActions() {
           actor: "dashboard",
         }),
       });
-      setText("ledgerResult", JSON.stringify(result, null, 2));
+      setText("ledgerResult", formatJsonForAnalyst(result));
     })
   );
   on("append", "click", () =>
