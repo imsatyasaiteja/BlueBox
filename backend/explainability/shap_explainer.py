@@ -154,14 +154,14 @@ def _pcap_explanation(top: list, event: dict, stats: dict, sv_dict: dict) -> str
         port = int(event.get("port", 0))
         parts.append(
             f"Unexpected port {port} for {domain} domain "
-            f"— possible command injection or unauthorized service."
+            f"- possible command injection or unauthorized service."
         )
 
     if "protocol_anomaly_flag" in top and sv_dict.get("protocol_anomaly_flag", 0) < 0:
         protocol = event.get("protocol", "unknown")
         parts.append(
             f"Unexpected protocol {protocol} detected on {domain} "
-            f"— does not match domain baseline."
+            f"- does not match domain baseline."
         )
 
     return " ".join(parts) if parts else "Anomaly detected in PCAP traffic."
@@ -172,9 +172,9 @@ def _arinc_explanation(top: list, event: dict, sv_dict: dict) -> str:
 
     # Same sign guard: only describe a feature as an anomaly driver if SHAP < 0.
     if "ssm_bits" in top and sv_dict.get("ssm_bits", 0) < 0:
-        parts.append("Invalid SSM bits detected — data validity flag is corrupted.")
+        parts.append("Invalid SSM bits detected - data validity flag is corrupted.")
     if "parity_bit" in top and sv_dict.get("parity_bit", 0) < 0:
-        parts.append("Parity bit error — word integrity check failed.")
+        parts.append("Parity bit error - word integrity check failed.")
     if "data_bits" in top and sv_dict.get("data_bits", 0) < 0:
         label = event.get("src", "unknown")
         parts.append(f"Abnormal data field value on ARINC bus (label {label}).")

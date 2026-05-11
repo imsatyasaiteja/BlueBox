@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BlueBox | Forensic Replay</title>
+  <link rel="stylesheet" href="/styles.css?v=bluebox-demo-20260511-replay">
+</head>
+<body data-page="replay">
+  <div class="app-shell">
+    <header class="sidebar">
+      <a class="brand" href="/index.html" aria-label="BlueBox forensic replay">
+        <img src="./images/logo_crop.png" alt="BlueBox logo" class="logo" height="30">
+        <!-- <span>Flight Cyber Data Recorder</span> -->
+      </a>
+      <nav class="nav" aria-label="Main sections">
+        <a class="nav-item" href="/index.html" data-section="anomaly">Anomaly Detection</a>
+        <a class="nav-item" href="/logger.html" data-section="logger">Logger</a>
+        <a class="nav-item active" href="/replay.html" data-section="replay">Forensic Replay</a>
+      </nav>
+      <!-- <div class="sidebar-status" aria-label="System status">
+        <div><span>Chain</span><strong id="sideChain">loading</strong></div>
+        <div><span>Anomalies</span><strong id="sideAnomalies">0</strong></div>
+        <div><span>Trusted</span><strong id="sideTrusted">false</strong></div>
+      </div> -->
+    </header>
+
+    <div class="main-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Forensic Replay</p>
+          <h1>Incident Evidence Replay</h1>
+          <p id="dbLine">Loading replay state</p>
+        </div>
+        <div class="topbar-actions">
+          <button id="refresh" class="ghost">Refresh</button>
+          <div class="status-pill" id="statusPill">loading</div>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="section-view active" id="section-replay">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Forensic Replay</p>
+              <h2>Maintenance Incident Reconstruction</h2>
+            </div>
+          </div>
+
+          <section class="replay-grid">
+            <div class="panel chart-panel attack-graph-panel">
+              <div class="panel-header"><div><p class="eyebrow">Attack Graph</p><h2>Likely Attack Path</h2></div></div>
+              <canvas id="attackGraph" width="900" height="360" aria-label="Attack graph"></canvas>
+              <div id="attackGraphDetail" class="graph-detail">Select a graph node to inspect the suspected cause.</div>
+            </div>
+
+            <div class="panel replay-panel">
+              <div class="panel-header"><div><p class="eyebrow">LLM Assistant</p><h2>Maintenance Chat</h2></div></div>
+              <div id="replayChatLog" class="chat-log replay-chat-log">
+                <div class="chat-bot">Ask what failed, which component was affected, or what sequence to inspect. LLM backend integration is pending.</div>
+              </div>
+              <form id="replayChatForm" class="chat-form">
+                <input id="replayChatInput" placeholder="Ask about the suspected attack path">
+                <button type="submit">Send</button>
+              </form>
+            </div>
+          </section>
+
+          <section class="replay-grid">
+            <div class="panel chart-panel">
+              <div class="panel-header"><div><p class="eyebrow">Evidence Timeline</p><h2>Anomalous Events Over Time</h2></div></div>
+              <canvas id="replayTimelineGraph" width="900" height="270" aria-label="Anomalous evidence timeline"></canvas>
+            </div>
+
+            <div class="panel chart-panel compact-chart">
+              <div class="panel-header"><div><p class="eyebrow">Composition</p><h2>Event Mix</h2></div></div>
+              <canvas id="replayMixChart" width="620" height="270" aria-label="Replay event composition chart"></canvas>
+            </div>
+          </section>
+
+          <section class="replay-grid lower">
+            <div class="panel table-panel">
+              <div class="panel-header table-header">
+                <div><p class="eyebrow">Evidence Stream</p><h2>Recent Entries</h2></div>
+                <span class="table-count" id="entryCountLabel">0 shown</span>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>Time</th><th>Seq</th><th>Severity</th><th>Risk Score</th><th>Component</th><th></th></tr>
+                  </thead>
+                  <tbody id="entries"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="panel detail-panel">
+              <div class="panel-header"><div><p class="eyebrow">Evidence Viewer</p><h2>Entry Payload</h2></div></div>
+              <pre id="entryDetail">Select an entry.</pre>
+            </div>
+          </section>
+
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js?v=bluebox-demo-20260511-replay"></script>
+</body>
+</html>

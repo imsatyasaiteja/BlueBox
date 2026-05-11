@@ -32,10 +32,10 @@ except ImportError:
 DEFAULT_SCENARIO_DIR = PROJECT_ROOT / "demo" / "attack_scenarios"
 DEFAULT_OUTPUT_DIR = RUNTIME_DEMO_OUTPUT_DIR
 SCENARIOS = (
+    "mixed_attack",
     "normal",
     "lateral_movement",
     "command_injection",
-    "injection_attack",
     "replay_attack",
 )
 
@@ -172,6 +172,7 @@ def adjusted_frequency(domain: DomainConfig, anomaly_type: str | None) -> int:
         "replay_attack",
         "command_duplication",
         "sequence_violation",
+        "protocol_violation",
     }:
         return domain.frequency * 5
     return domain.frequency
@@ -200,6 +201,7 @@ def generate_pcap_record(
     src_ip = random_ip(domain.ip_prefix, domain.ip_octets)
     dst_ip = random_ip(domain.ip_prefix, domain.ip_octets)
     src_port = random.randint(1024, 65535)
+    protocol = domain.protocol
     packet_size = adjusted_packet_size(domain, anomaly_type if anomaly else None)
     frequency = adjusted_frequency(domain, anomaly_type if anomaly else None)
     cross_domain_flag = 0
@@ -216,7 +218,13 @@ def generate_pcap_record(
     else:
         dst_port = _expected_port(domain)
 
-    if domain.protocol == "tcp":
+    if anomaly and anomaly_type in {"protocol_violation", "sequence_violation"}:
+        protocol = "udp" if domain.protocol == "tcp" else "tcp"
+        protocol_anomaly_flag = 1
+        if protocol == "tcp":
+            dst_port = random.choice(SENSITIVE_PORTS)
+
+    if protocol == "tcp":
         transport = TCP(sport=src_port, dport=dst_port)
     else:
         transport = UDP(sport=src_port, dport=dst_port)
@@ -233,7 +241,7 @@ def generate_pcap_record(
         "timestamp": utc_timestamp(),
         "data_format": "PCAP",
         "domain": domain.name,
-        "protocol": domain.protocol,
+        "protocol": protocol,
         "src_ip": src_ip,
         "dst_ip": dst_ip,
         "src": src_ip,
