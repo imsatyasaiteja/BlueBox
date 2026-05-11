@@ -1,0 +1,49 @@
+# BlueBox Attack Scenario: MIXED ATTACK
+# Presentation scenario that exercises all trained anomaly feature families.
+
+name: mixed_attack
+description: "Mixed aircraft cyber incident with network, command, replay, and protocol anomalies"
+
+anomaly_rate: 0.28
+attack_window_start: 0.15
+attack_window_duration: 0.70
+
+attack_vector:
+  source_domain: maintenance
+  target_domain: avionics
+  method: "multi_stage_intrusion"
+  description: "Maintenance foothold expands into avionics traffic, command tampering, and replay behavior"
+
+attack_types:
+  - lateral_movement
+  - network_scan
+  - burst_traffic
+  - command_injection
+  - control_surface_tampering
+  - replay_attack
+  - sequence_violation
+  - protocol_violation
+  - data_injection
+
+traffic_characteristics:
+  - "Cross-domain traffic from maintenance/cabin zones toward avionics"
+  - "Large payload command injections on protected ports"
+  - "Frequency bursts that resemble scanning and replay behavior"
+  - "Unexpected protocol transitions"
+  - "ARINC SSM, parity, frequency, and data-field anomalies"
+
+duration_multiplier: 1.0
+
+expected_anomaly_signals:
+  - "packet_size_zscore"
+  - "frequency_zscore"
+  - "cross_domain_flag"
+  - "port_anomaly_flag"
+  - "protocol_anomaly_flag"
+  - "ssm_int"
+  - "parity_valid"
+  - "data_bits_zscore"
+
+severity: HIGH
+impact: "Multi-stage aircraft network and avionics evidence trail"
+detection_priority: HIGHEST

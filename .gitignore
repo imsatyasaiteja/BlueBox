@@ -2,9 +2,7 @@ bluebox-env/
 .venv/
 __pycache__/
 
-data/generated/
 data/derived/
-demo/logs/
 logger_layer_server.*.log
 *.log
 
@@ -17,9 +15,12 @@ runtime/evidence/**/*.db-journal
 runtime/evidence/**/*.db-*
 runtime/evidence/**/*.jsonl
 runtime/evidence/**/*.compromised.*
+runtime/trust_boundary/**/*.jsonl
+runtime/trust_boundary/**/*.compromised.*
 
 !runtime/config/keys/.gitkeep
 !runtime/evidence/sqlite/.gitkeep
-!runtime/evidence/recovery_ledger/.gitkeep
+!runtime/trust_boundary/recovery_ledger/.gitkeep
+!runtime/trust_boundary/ai_evidence_ledger/.gitkeep
 
 assets/
