@@ -515,67 +515,21 @@ function renderEntries(entries, emptyMessage = "No trusted entries available.") 
   setText("entryCountLabel", `${entries.length} shown`);
   if (!entries.length) {
     const row = document.createElement("tr");
-<<<<<<< HEAD
     row.innerHTML = `<td colspan="6" class="empty-row">${emptyMessage}</td>`;
-=======
-    const cell = document.createElement("td");
-    cell.colSpan = 6;
-    cell.className = "empty-row";
-    cell.textContent = "No entries yet. Append JSON or ingest a path to start the chain.";
-    row.appendChild(cell);
->>>>>>> 6a348f7fbbb7182a00e95234b5ceccdcdba64a0f
     tbody.appendChild(row);
     return;
   }
   for (const entry of entries) {
     const row = document.createElement("tr");
     const typeClass = String(entry.source_type || "").toLowerCase().replace(/[^a-z0-9]+/g, "-");
-<<<<<<< HEAD
     row.innerHTML = `
       <td class="seq-cell">#${entry.sequence}</td>
       <td><span class="badge ${typeClass}">${entry.source_type}</span></td>
       <td>${entry.source_offset}</td>
       <td>${entry.ingest_mode || "-"}</td>
-      <td>${entry.source_file || "-"}</td>
+      <td class="hash-cell" title="${entry.entry_hash}">${shortHash(entry.entry_hash)}</td>
       <td><button class="ghost" data-sequence="${entry.sequence}">Open</button></td>
     `;
-=======
-
-    const seqCell = document.createElement("td");
-    seqCell.className = "seq-cell";
-    seqCell.textContent = `#${entry.sequence}`;
-    row.appendChild(seqCell);
-
-    const typeCell = document.createElement("td");
-    const badge = document.createElement("span");
-    badge.className = `badge ${typeClass}`.trim();
-    badge.textContent = entry.source_type || "";
-    typeCell.appendChild(badge);
-    row.appendChild(typeCell);
-
-    const offsetCell = document.createElement("td");
-    offsetCell.textContent = entry.source_offset == null ? "" : String(entry.source_offset);
-    row.appendChild(offsetCell);
-
-    const ingestModeCell = document.createElement("td");
-    ingestModeCell.textContent = entry.ingest_mode || "-";
-    row.appendChild(ingestModeCell);
-
-    const hashCell = document.createElement("td");
-    hashCell.className = "hash-cell";
-    hashCell.title = entry.entry_hash || "";
-    hashCell.textContent = shortHash(entry.entry_hash);
-    row.appendChild(hashCell);
-
-    const actionCell = document.createElement("td");
-    const button = document.createElement("button");
-    button.className = "secondary";
-    button.dataset.sequence = String(entry.sequence);
-    button.textContent = "Open";
-    actionCell.appendChild(button);
-    row.appendChild(actionCell);
-
->>>>>>> 6a348f7fbbb7182a00e95234b5ceccdcdba64a0f
     tbody.appendChild(row);
   }
   tbody.querySelectorAll("button").forEach((button) => {
@@ -664,6 +618,45 @@ function notifyDemoRun() {
   } catch {
     // Storage can be unavailable in hardened browser profiles; periodic refresh still works.
   }
+}
+
+function renderReplaySteps(items) {
+  const list = $("replaySteps");
+  if (!list) return;
+  list.replaceChildren();
+  const steps = [
+    {
+      title: "Verify evidence chain",
+      text: items.length ? `${items.length} trusted entries loaded after chain and ledger verification.` : "Waiting for trusted entries.",
+      state: items.length ? "complete" : "pending",
+    },
+    {
+      title: "Identify suspicious path",
+      text: items.some((item) => Number(item.predicted_anomaly))
+        ? "Anomalous sequence found in replay timeline."
+        : "No anomalous replay step is attached yet.",
+      state: items.some((item) => Number(item.predicted_anomaly)) ? "alert" : "pending",
+    },
+    {
+      title: "Inspect raw evidence",
+      text: "Open any trusted entry below to decrypt the raw payload and confirm source identity.",
+      state: "ready",
+    },
+    {
+      title: "Export incident context",
+      text: "Use the evidence stream and viewer to walk through the trusted payload trail.",
+      state: "ready",
+    },
+  ];
+  steps.forEach((step, index) => {
+    const node = document.createElement("div");
+    node.className = `step-card ${step.state}`;
+    node.innerHTML = `
+      <span>${index + 1}</span>
+      <div><strong>${step.title}</strong><p>${step.text}</p></div>
+    `;
+    list.appendChild(node);
+  });
 }
 
 function graphNodeAt(canvas, event) {
@@ -868,7 +861,7 @@ function drawReplayMix(items) {
   ctx.fillStyle = "#03101b";
   ctx.fillRect(0, 0, width, height);
   const counts = items.reduce((acc, item) => {
-    const key = item.service || item.target_component || item.source_type || "UNKNOWN";
+    const key = item.source_type || "UNKNOWN";
     acc[key] = (acc[key] || 0) + 1;
     return acc;
   }, {});
