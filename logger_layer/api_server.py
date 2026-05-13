@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local HTTP API and static server for the BlueBox logger demo."""
+"""Local HTTP API and static server for the BlueBox logger dashboard."""
 
 from __future__ import annotations
 
@@ -24,9 +24,10 @@ from logger_layer.hash_chain_logger import (
     DEFAULT_RECOVERY_LEDGER,
     HashChainLogger,
 )
+from logger_layer.provenance_graph_builder import ProvenanceGraphBuilder
 
 
-STATIC_DIR = PROJECT_ROOT / "UI_layer" / "logger_page"
+STATIC_DIR = PROJECT_ROOT / "UI_layer" / "bluebox_react" / "dist"
 DEMO_OUTPUT_DIR = RUNTIME_DEMO_OUTPUT_DIR / "logger_demo"
 
 
@@ -56,6 +57,34 @@ class LoggerDemoHandler(SimpleHTTPRequestHandler):
             if parsed.path == "/api/replay":
                 self.require_trusted_readiness()
                 self.write_json(self.logger.forensic_replay())
+                return
+            if parsed.path == "/api/provenance-graph":
+                # Note: Not requiring trusted readiness for forensic analysis
+                # as this is read-only historical analysis
+                try:
+                    # Get forensic replay data
+                    replay_data = self.logger.forensic_replay(limit=50)
+                    timeline = replay_data.get("timeline", [])
+                    
+                    # Parse severity threshold from query params
+                    severity_threshold = 0.5
+                    query_params = parse_qs(parsed.query)
+                    if "severity" in query_params:
+                        try:
+                            severity_threshold = float(query_params["severity"][0])
+                        except (ValueError, IndexError):
+                            pass
+                    
+                    # Build provenance graph using NetworkX
+                    graph_builder = ProvenanceGraphBuilder()
+                    graph_data = graph_builder.build_from_forensic_timeline(
+                        timeline,
+                        severity_threshold=severity_threshold
+                    )
+                    
+                    self.write_json(graph_data)
+                except Exception as e:
+                    self.write_json({"error": str(e), "nodes": {}, "edges": [], "positions": {}}, status=400)
                 return
             if parsed.path == "/api/report":
                 self.require_trusted_readiness()
@@ -337,7 +366,7 @@ class LoggerDemoServer(ThreadingHTTPServer):
 def main() -> None:
     import argparse
 
-    parser = argparse.ArgumentParser(description="Run the BlueBox logger demo web app")
+    parser = argparse.ArgumentParser(description="Run the BlueBox logger dashboard")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
@@ -357,7 +386,7 @@ def main() -> None:
             ai_evidence_ledger_path=args.ai_evidence_ledger,
         ),
     )
-    print(f"BlueBox logger demo: http://{args.host}:{args.port}")
+    print(f"BlueBox logger dashboard: http://{args.host}:{args.port}")
     server.serve_forever()
 
 

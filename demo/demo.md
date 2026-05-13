@@ -29,27 +29,25 @@ previous evidence:
 .\bluebox-env\Scripts\python.exe .\logger_layer\api_server.py --host 127.0.0.1 --port 8080 --db .\runtime\evidence\sqlite\bluebox_log.db --recovery-ledger .\runtime\trust_boundary\recovery_ledger\bluebox_recovery.jsonl --ai-evidence-ledger .\runtime\trust_boundary\ai_evidence_ledger\bluebox_ai_evidence.jsonl
 ```
 
-Open these three pages side by side:
+Open the React dashboard:
 
 ```text
-http://127.0.0.1:8080/logger.html
-http://127.0.0.1:8080/index.html
-http://127.0.0.1:8080/replay.html
+http://127.0.0.1:8080
 ```
 
-The pages auto-refresh every 3 seconds. Use `Refresh` for immediate updates.
+The dashboard auto-refreshes every 3 seconds. Use `Refresh` for immediate updates.
 
 ## UI Walkthrough
 
-1. On `index.html`, choose `command_injection` or `lateral_movement`.
+1. In the Anomaly Detection view, choose `command_injection` or `lateral_movement`.
    Use `mixed_attack` for the final judged walkthrough.
 2. Set duration to `3` seconds for a short demo, or `5` seconds for more rows.
 3. Click `Generate + Score + Ingest`.
 4. Watch Logger metrics update: entries, verified rows, anchor, ledger, chain
    head, and verification gauge.
-5. On `index.html`, show AI evidence count, anomaly score trace,
+5. In the Anomaly Detection view, show AI evidence count, anomaly score trace,
    classification mix, flagged anomalies, and SHAP reasons.
-6. On `replay.html`, show attack graph, replay procedure, chain timeline,
+6. In the Forensic Replay view, show attack graph, replay procedure, chain timeline,
    event composition, evidence stream, and decrypted evidence viewer.
 7. Run attacker delete/update attempts from CLI only. Blocked attempts appear as
    signed security events after refresh.
@@ -83,6 +81,27 @@ it again. Static HTML can update while the already-running Python process still
 has the old `/api/demo` code loaded, which is the common reason for seeing raw
 logger entries but no AI sidecar evidence.
 
+## Clean Runtime Before A Demo
+
+Use this when you want a clean BlueBox demo run. It removes generated runtime
+evidence, demo output, and derived score files. It does not delete source code,
+models, keys, or files under `data/raw`.
+
+```powershell
+$root = Resolve-Path .
+$targets = @(
+  "runtime\evidence\sqlite\bluebox_log.db*",
+  "runtime\trust_boundary\recovery_ledger\bluebox_recovery*.jsonl",
+  "runtime\trust_boundary\ai_evidence_ledger\bluebox_ai_evidence*.jsonl",
+  "runtime\evidence\demo_output\logger_demo",
+  "runtime\evidence\demo_output\standalone_*",
+  "data\derived"
+)
+foreach ($item in $targets) {
+  Get-ChildItem -Path $item -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
+}
+```
+
 ## Useful CLI Attack Checks
 
 These commands assume the BlueBox demo server above is running.
@@ -98,13 +117,13 @@ $loggerArgs = @(
 )
 ```
 
-Try to read protected anomaly data before the chain is trusted:
+<!-- Try to read protected anomaly data before the chain is trusted:
 
 ```powershell
 Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8080/api/anomaly
 ```
 
-Expected before ingestion: HTTP `403`.
+Expected before ingestion: HTTP `403`. -->
 
 Show blocked SQLite tamper attempts:
 
@@ -151,7 +170,7 @@ Use `force-corrupt delete` instead of `force-corrupt update` if you want to show
 a missing-row attack. By default it deletes a middle row so the next row fails
 the previous-hash check. The restore flow is the same.
 
-## Standalone Traffic Generation
+## Traffic Generation via CLI
 
 Use this when you want to show the generator without the UI:
 
@@ -163,27 +182,6 @@ Generate all kept scenarios:
 
 ```powershell
 .\bluebox-env\Scripts\python.exe .\demo\traffic_simulator.py --scenario all --duration 3 --output-dir .\runtime\evidence\demo_output\standalone_all --test
-```
-
-## Clean Runtime Before A Demo
-
-Use this when you want a clean BlueBox demo run. It removes generated runtime
-evidence, demo output, and derived score files. It does not delete source code,
-models, keys, or files under `data/raw`.
-
-```powershell
-$root = Resolve-Path .
-$targets = @(
-  "runtime\evidence\sqlite\bluebox_log.db*",
-  "runtime\trust_boundary\recovery_ledger\bluebox_recovery*.jsonl",
-  "runtime\trust_boundary\ai_evidence_ledger\bluebox_ai_evidence*.jsonl",
-  "runtime\evidence\demo_output\logger_demo",
-  "runtime\evidence\demo_output\standalone_*",
-  "data\derived"
-)
-foreach ($item in $targets) {
-  Get-ChildItem -Path $item -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
-}
 ```
 
 <!-- For a full local reset of all generated runtime evidence:
