@@ -9,3 +9,4 @@ scikit-learn==1.8.0
 shap
 six==1.17.0
 cryptography==46.0.3
+networkx==3.5

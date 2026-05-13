@@ -1,0 +1,221 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-dark: #06111C;
+  --color-panel: #0E2A43;
+  --color-cyan: #39D8FF;
+  --color-aqua: #16F0C5;
+  --color-red: #FF6478;
+  --color-yellow: #FFD166;
+  --color-green: #49E38F;
+  --color-text: #E8F7FF;
+  --color-muted: #91AEC5;
+  --shadow-subtle: 0 0 16px rgba(0,0,0,0.2);
+  --shadow-glow: 0 10px 24px rgba(22,240,197,0.1);
+}
+
+* {
+  @apply box-border;
+}
+
+body {
+  @apply bg-bluebox-dark text-bluebox-text font-sans;
+  background-color: var(--color-dark);
+  color: var(--color-text);
+}
+
+html, body, #root {
+  @apply w-full h-full m-0 p-0;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(139, 203, 255, 0.05);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(139, 203, 255, 0.3);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(139, 203, 255, 0.5);
+}
+
+/* Smooth transitions */
+@layer components {
+  .transition-smooth {
+    @apply transition-all duration-200 ease-out;
+  }
+
+  .text-eyebrow {
+    @apply text-xs font-black uppercase tracking-widest text-bluebox-muted;
+  }
+
+  .text-heading-1 {
+    @apply text-4xl font-black;
+  }
+
+  .text-heading-2 {
+    @apply text-2xl font-black;
+  }
+
+  .card-panel {
+    @apply border border-cyan-900 rounded-lg p-4 bg-gradient-to-b from-slate-900 to-slate-950;
+    border-color: rgba(139, 203, 255, 0.18);
+    background: linear-gradient(to bottom, #0E2A43, #031220);
+  }
+
+  .metric-card {
+    @apply rounded-lg p-4 flex flex-col gap-2;
+    border: 1px solid rgba(139, 203, 255, 0.18);
+    background: linear-gradient(135deg, rgba(57, 216, 255, 0.05), rgba(22, 240, 197, 0.02));
+    border-top: 2px solid var(--color-cyan);
+  }
+
+  .metric-card.danger {
+    border-top-color: var(--color-red);
+  }
+
+  .btn-primary {
+    @apply px-4 py-2 rounded-lg font-bold text-sm transition-smooth;
+    background: linear-gradient(135deg, #1e5a8e, #0d3d5c);
+    border: 1px solid var(--color-cyan);
+    color: var(--color-cyan);
+    box-shadow: var(--shadow-glow);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    @apply brightness-110;
+  }
+
+  .btn-primary:disabled {
+    @apply opacity-55 cursor-wait;
+  }
+
+  .btn-ghost {
+    @apply px-4 py-2 rounded-lg font-semibold text-sm transition-smooth;
+    background: rgba(139, 203, 255, 0.08);
+    border: 1px solid rgba(139, 203, 255, 0.2);
+    color: var(--color-text);
+  }
+
+  .btn-ghost:hover:not(:disabled) {
+    background: rgba(139, 203, 255, 0.15);
+  }
+
+  .btn-success {
+    @apply px-4 py-2 rounded-lg font-bold text-sm transition-smooth;
+    background: linear-gradient(135deg, #2d6a4f, #1b4332);
+    border: 1px solid var(--color-green);
+    color: var(--color-green);
+  }
+
+  .btn-danger {
+    @apply px-4 py-2 rounded-lg font-bold text-sm transition-smooth;
+    background: linear-gradient(135deg, #8b2e2e, #5c1a1a);
+    border: 1px solid var(--color-red);
+    color: var(--color-red);
+  }
+
+  .btn-warning {
+    @apply px-4 py-2 rounded-lg font-bold text-sm transition-smooth;
+    background: linear-gradient(135deg, #6b4f1d, #3d2e12);
+    border: 1px solid var(--color-yellow);
+    color: var(--color-yellow);
+  }
+
+  .input-field {
+    @apply px-3 py-2 rounded-lg border font-mono text-sm;
+    background: rgba(139, 203, 255, 0.02);
+    border-color: rgba(139, 203, 255, 0.18);
+    color: var(--color-text);
+  }
+
+  .input-field:focus {
+    @apply outline-none;
+    border-color: var(--color-cyan);
+    box-shadow: 0 0 0 3px rgba(57, 216, 255, 0.1);
+  }
+
+  .status-pill {
+    @apply px-3 py-1 rounded-full text-xs font-bold uppercase;
+    background: rgba(139, 203, 255, 0.1);
+    border: 1px solid rgba(139, 203, 255, 0.3);
+    color: var(--color-cyan);
+  }
+
+  .status-pill.verified {
+    background: rgba(73, 227, 143, 0.1);
+    border-color: rgba(73, 227, 143, 0.3);
+    color: var(--color-green);
+  }
+
+  .status-pill.failed {
+    background: rgba(255, 100, 120, 0.1);
+    border-color: rgba(255, 100, 120, 0.3);
+    color: var(--color-red);
+  }
+
+  .alert-card {
+    @apply p-3 rounded-lg border-l-4 bg-slate-900 mb-2;
+    border-color: var(--color-cyan);
+  }
+
+  .alert-card.critical {
+    border-left-color: var(--color-red);
+  }
+
+  .alert-card.warning {
+    border-left-color: var(--color-yellow);
+  }
+
+  .chain-health-card {
+    @apply flex items-center gap-5 p-4 rounded-lg;
+    background: linear-gradient(135deg, rgba(57, 216, 255, 0.08), rgba(6, 17, 28, 0.45));
+    border: 1px solid rgba(139, 203, 255, 0.16);
+  }
+
+  .chain-health-dial {
+    width: 132px;
+    height: 132px;
+    border-radius: 999px;
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    box-shadow: 0 0 22px rgba(0, 0, 0, 0.25);
+  }
+
+  .chain-health-inner {
+    width: 104px;
+    height: 104px;
+    border-radius: 999px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(232, 247, 255, 0.12);
+    background: #06111C;
+  }
+
+  .chain-health-inner strong {
+    font-size: 1.15rem;
+    font-weight: 900;
+    line-height: 1;
+  }
+
+  .chain-health-inner span {
+    margin-top: 6px;
+    font-size: 0.68rem;
+    color: var(--color-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+}
