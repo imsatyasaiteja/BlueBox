@@ -49,14 +49,29 @@ class ProvenanceGraphBuilder:
             event_id = f"event-{sequence}"
             source_id = f"source-{event.get('source_component') or 'unknown'}"
             target_id = f"target-{event.get('target_component') or 'unknown'}"
+            
+            # Extract domain from event
+            domain = str(event.get('domain') or event.get('protocol') or 'unknown').lower()
 
-            self._add_node(source_id, "source", event.get("source_component") or "unknown")
-            self._add_node(target_id, "target", event.get("target_component") or "unknown")
+            self._add_node(
+                source_id, 
+                "source", 
+                event.get("source_component") or "unknown",
+                domain=domain
+            )
+            self._add_node(
+                target_id, 
+                "target", 
+                event.get("target_component") or "unknown",
+                domain=domain
+            )
             self._add_node(
                 event_id,
                 "anomaly",
                 f"#{index} {event.get('severity') or 'ANOMALY'}",
                 risk=risk,
+                domain=domain,
+                severity=event.get("severity") or "ANOMALY",
                 metadata={
                     "severity": event.get("severity") or "ANOMALY",
                     "summary": event.get("summary") or "",
@@ -68,6 +83,7 @@ class ProvenanceGraphBuilder:
                     "source_component": event.get("source_component"),
                     "target_component": event.get("target_component"),
                     "service": event.get("service") or "observed",
+                    "domain": domain,
                 },
             )
 
@@ -103,6 +119,8 @@ class ProvenanceGraphBuilder:
         kind: str,
         label: object,
         risk: float = 0.0,
+        domain: str = "unknown",
+        severity: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> None:
         if node_id in self.nodes:
@@ -112,6 +130,8 @@ class ProvenanceGraphBuilder:
             "kind": kind,
             "label": str(label),
             "risk": risk,
+            "domain": domain,
+            **({"severity": severity} if severity else {}),
             **(metadata or {}),
         }
         if self.graph is not None:

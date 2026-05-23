@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import logging
+import os
 import random
 import sys
 import time
@@ -13,6 +14,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+import urllib.request
 
 import yaml
 from scapy.all import Ether, IP, Raw, TCP, UDP, wrpcap
@@ -40,6 +42,14 @@ SCENARIOS = (
 )
 
 LOGGER = logging.getLogger("bluebox.traffic_simulator")
+
+
+def dashboard_source_path(path: Path | str) -> str:
+    """Return the same source path string the backend uses for correlation."""
+    source_path = Path(path).expanduser()
+    if not source_path.is_absolute():
+        source_path = PROJECT_ROOT / source_path
+    return str(source_path.resolve())
 
 
 @dataclass(frozen=True)
@@ -133,8 +143,133 @@ class DomainMetrics:
         return self.records / self.duration_sec if self.duration_sec else 0.0
 
 
+class DashboardLiveSink:
+    """Stream generated simulator rows to the local BlueBox dashboard in small batches."""
+
+    def __init__(
+        self,
+        base_url: str,
+        scenario_name: str,
+        batch_size: int = 25,
+        timeout_sec: float = 0.75,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.scenario_name = scenario_name
+        self.batch_size = max(1, batch_size)
+        self.timeout_sec = timeout_sec
+        self.enabled = False
+        self.buffer: list[dict[str, Any]] = []
+        self.streamed_entries = 0
+        self.streamed_ai_records = 0
+        self._warned = False
+        self.enabled = self._probe()
+
+    def _probe(self) -> bool:
+        try:
+            with urllib.request.urlopen(f"{self.base_url}/api/status", timeout=self.timeout_sec) as response:
+                return 200 <= response.status < 300
+        except Exception as exc:
+            LOGGER.info(
+                "Live dashboard not available at %s; continuing file-only simulation (%s)",
+                self.base_url,
+                exc,
+            )
+            return False
+
+    def append_record(
+        self,
+        domain: str,
+        source_file: Path | str,
+        source_offset: int,
+        record: dict[str, Any],
+        verdict: dict[str, Any] | None = None,
+    ) -> None:
+        if not self.enabled:
+            return
+        item = {
+            "source_file": dashboard_source_path(source_file),
+            "source_type": "CSV",
+            "source_offset": source_offset,
+            "payload": record,
+        }
+        if verdict is not None:
+            item["verdict"] = verdict
+        self.buffer.append(item)
+        if len(self.buffer) >= self.batch_size:
+            self.flush()
+
+    def flush(self) -> None:
+        if not self.enabled or not self.buffer:
+            return
+        payload = {
+            "scenario": self.scenario_name,
+            "records": self.buffer,
+        }
+        request = urllib.request.Request(
+            f"{self.base_url}/api/live-traffic",
+            data=json_bytes(payload),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=max(self.timeout_sec, 4.0)) as response:
+                result = json_load_bytes(response.read())
+            self.streamed_entries += int(result.get("ingested_entries", 0))
+            self.streamed_ai_records += int(result.get("ai_evidence_records", 0))
+            self.buffer.clear()
+        except Exception as exc:
+            self.enabled = False
+            if not self._warned:
+                LOGGER.warning(
+                    "Stopping live dashboard stream after a backend error: %s",
+                    exc,
+                )
+                self._warned = True
+
+    def attach_scores(
+        self,
+        source_csv: Path,
+        score_csv: Path,
+        include_shap: bool = True,
+    ) -> None:
+        if not self.enabled:
+            return
+        payload = {
+            "source_csv": dashboard_source_path(source_csv),
+            "score_csv": dashboard_source_path(score_csv),
+            "include_shap": include_shap,
+        }
+        request = urllib.request.Request(
+            f"{self.base_url}/api/attach-ai",
+            data=json_bytes(payload),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=45) as response:
+                result = json_load_bytes(response.read())
+            self.streamed_ai_records += int(result.get("ai_evidence_records", 0))
+        except Exception as exc:
+            if not self._warned:
+                LOGGER.warning("Could not attach live AI evidence to dashboard: %s", exc)
+                self._warned = True
+
+
 def utc_timestamp() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def json_bytes(payload: dict[str, Any]) -> bytes:
+    import json
+
+    return json.dumps(payload, default=str).encode("utf-8")
+
+
+def json_load_bytes(payload: bytes) -> dict[str, Any]:
+    import json
+
+    value = json.loads(payload.decode("utf-8"))
+    return value if isinstance(value, dict) else {}
 
 
 def load_scenario_yaml(
@@ -303,11 +438,15 @@ class TrafficGenerator:
         scenario: dict[str, Any],
         duration_sec: int,
         output_dir: Path | str = DEFAULT_OUTPUT_DIR,
+        live_sink: DashboardLiveSink | None = None,
+        score_live: bool = False,
     ) -> None:
         self.scenario = scenario
         self.duration_sec = duration_sec
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.live_sink = live_sink
+        self.score_live = score_live
 
     def in_attack_window(self, elapsed: float) -> bool:
         start_ratio = self.scenario.get("attack_window_start")
@@ -342,6 +481,7 @@ class TrafficGenerator:
         records: list[dict[str, Any]] = []
         label_rows: list[dict[str, Any]] = []
         metrics = DomainMetrics(domain=domain.name)
+        csv_path = self.output_dir / domain.csv_name
 
         while True:
             elapsed = time.monotonic() - start_time
@@ -362,11 +502,12 @@ class TrafficGenerator:
             else:
                 record = generate_arinc_record(anomaly, anomaly_type)
 
+            row_index = len(records)
             records.append(record)
             if domain.data_format == "PCAP":
                 label_rows.append(
                     {
-                        "packet_index": len(records) - 1,
+                        "packet_index": row_index,
                         "is_anomaly": record["is_anomaly"],
                         "anomaly_type": record["anomaly_type"],
                     }
@@ -374,9 +515,13 @@ class TrafficGenerator:
             metrics.records += 1
             metrics.anomaly_records += int(anomaly)
             metrics.normal_records += int(not anomaly)
+            if self.live_sink is not None:
+                self.live_sink.append_record(domain.name, csv_path, row_index, record)
             next_record_time += interval
 
         metrics.duration_sec = time.monotonic() - start_time
+        if self.live_sink is not None:
+            self.live_sink.flush()
         self.write_outputs(domain, packets, records, label_rows)
         return metrics
 
@@ -416,7 +561,10 @@ class TrafficGenerator:
             self.duration_sec,
             self.output_dir,
         )
-        return [self.generate_domain(domain) for domain in DOMAINS]
+        results = [self.generate_domain(domain) for domain in DOMAINS]
+        if self.live_sink is not None:
+            self.live_sink.flush()
+        return results
 
 
 def event_from_record(record: dict[str, str]) -> dict[str, Any]:
@@ -444,6 +592,33 @@ def event_from_record(record: dict[str, str]) -> dict[str, Any]:
 
 def default_score_path(csv_file: Path) -> Path:
     return csv_file.with_name(f"{csv_file.stem}_scores.csv")
+
+
+def verdict_from_score(record: dict[str, Any], score: dict[str, Any]) -> dict[str, Any]:
+    verdict: dict[str, Any] = {
+        "anomaly_score": float(score["anomaly_score"]),
+        "predicted_anomaly": int(score["predicted_anomaly"]),
+        "severity": str(score["severity"]),
+        "model_used": str(score["model_used"]),
+    }
+    if record.get("timestamp"):
+        verdict["occurred_at"] = record["timestamp"]
+    for key in (
+        "data_format",
+        "domain",
+        "protocol",
+        "src",
+        "dst",
+        "src_ip",
+        "dst_ip",
+        "label_octal",
+        "anomaly_type",
+        "port",
+        "dst_port",
+    ):
+        if record.get(key) not in (None, ""):
+            verdict[key] = record[key]
+    return verdict
 
 
 def test_anomaly_detection(
@@ -534,6 +709,30 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--test", action="store_true", help="Score generated CSV files")
     parser.add_argument("--test-only", type=Path, help="Score an existing CSV file")
     parser.add_argument("--seed", type=int, help="Random seed for repeatable output")
+    parser.add_argument(
+        "--live-dashboard",
+        dest="live_dashboard",
+        action="store_true",
+        default=True,
+        help="Stream generated rows to the running BlueBox dashboard as they are created",
+    )
+    parser.add_argument(
+        "--no-live-dashboard",
+        dest="live_dashboard",
+        action="store_false",
+        help="Disable live dashboard streaming and only write output artifacts",
+    )
+    parser.add_argument(
+        "--dashboard-url",
+        default=os.getenv("BLUEBOX_DASHBOARD_URL", "http://127.0.0.1:8080"),
+        help="BlueBox backend URL used by --live-dashboard",
+    )
+    parser.add_argument(
+        "--live-batch-size",
+        type=int,
+        default=50,
+        help="Number of generated records sent per live dashboard update",
+    )
     return parser
 
 
@@ -552,7 +751,22 @@ def main() -> int:
     for scenario_name in scenario_names:
         scenario = load_scenario_yaml(scenario_name, args.yaml_dir)
         output_dir = args.output_dir / scenario_name if args.scenario == "all" else args.output_dir
-        metrics = TrafficGenerator(scenario, args.duration, output_dir).generate_all_domains()
+        live_sink = (
+            DashboardLiveSink(
+                args.dashboard_url,
+                scenario_name=scenario_name,
+                batch_size=args.live_batch_size,
+            )
+            if args.live_dashboard
+            else None
+        )
+        metrics = TrafficGenerator(
+            scenario,
+            args.duration,
+            output_dir,
+            live_sink=live_sink if live_sink and live_sink.enabled else None,
+            score_live=False,
+        ).generate_all_domains()
         for item in metrics:
             LOGGER.info(
                 "%s records=%d normal=%d anomaly=%d throughput=%.0f records/sec",
@@ -567,7 +781,19 @@ def main() -> int:
             for csv_path in sorted(output_dir.glob("*.csv")):
                 if csv_path.stem.endswith("_scores") or csv_path.stem.endswith("_labels"):
                     continue
-                test_anomaly_detection(csv_path)
+                score_path = default_score_path(csv_path)
+                test_anomaly_detection(csv_path, score_path)
+                if live_sink and live_sink.enabled:
+                    LOGGER.info("Attaching AI evidence and SHAP explanations for %s", csv_path.name)
+                    live_sink.attach_scores(csv_path, score_path, include_shap=True)
+
+        if live_sink and live_sink.streamed_entries:
+            LOGGER.info(
+                "Streamed %d live entries and %d AI evidence records to %s",
+                live_sink.streamed_entries,
+                live_sink.streamed_ai_records,
+                args.dashboard_url,
+            )
 
     return 0
 

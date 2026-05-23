@@ -134,11 +134,23 @@ export const Alert = ({ children, variant = 'info', className = '' }) => {
   )
 }
 
+const spinnerSizes = {
+  sm: 'w-4 h-4 border-2',
+  md: 'w-6 h-6 border-2',
+  lg: 'w-10 h-10 border-4',
+}
+
+export const Spinner = ({ size = 'md', className = '' }) => (
+  <span className={`inline-flex items-center justify-center ${className}`} role="status" aria-label="Loading">
+    <span
+      className={`${spinnerSizes[size] || spinnerSizes.md} block animate-spin rounded-full border-bluebox-cyan border-t-bluebox-aqua`}
+    />
+  </span>
+)
+
 export const LoadingSpinner = () => (
   <div className="flex items-center justify-center py-8">
-    <div className="animate-spin">
-      <div className="w-45 h-6 border-4 border-bluebox-cyan border-t-bluebox-aqua rounded-full"></div>
-    </div>
+    <Spinner size="lg" />
   </div>
 )
 
@@ -167,7 +179,7 @@ export const Table = ({ columns, rows = [], onRowClick = null }) => {
           {rows.map((row, idx) => (
             <tr
               key={idx}
-              className="border-b border-cyan-900 hover:bg-cyan-900 hover:bg-opacity-20 transition-smooth cursor-pointer"
+              className={`border-b border-cyan-900 transition-smooth ${onRowClick ? 'hover:bg-cyan-900 hover:bg-opacity-20 cursor-pointer' : ''}`}
               onClick={() => onRowClick?.(row)}
             >
               {columns.map(col => (

@@ -4,15 +4,15 @@ import time
 from datetime import datetime, timedelta
 import random
 
-# ─── PAGE CONFIG ───────────────────────────────────────────────────────────────
+#  PAGE CONFIG 
 st.set_page_config(
     page_title="BlueBox | Cyber Forensic Recorder",
-    page_icon="🔒",
+    page_icon="BB",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# ─── CUSTOM CSS ────────────────────────────────────────────────────────────────
+#  CUSTOM CSS 
 st.markdown("""
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;600;700&display=swap');
@@ -138,10 +138,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 # DATA LAYER
-# ─────────────────────────────────────────────────────────────────────────────
-# 🔌 INTEGRATION POINT A — TEAMMATE 2 (Hash Chain Logger)
+# 
+#  INTEGRATION POINT A - TEAMMATE 2 (Hash Chain Logger)
 # When teammate's SQLite database is ready, replace get_mock_logs() with:
 #
 #   import sqlite3
@@ -154,7 +154,7 @@ st.markdown("""
 # Expected columns from teammate's DB:
 #   timestamp, source, destination, protocol, port, packet_size,
 #   domain, hash, prev_hash, rsa_signature, chain_valid
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 @st.cache_data
 def get_mock_logs():
@@ -193,7 +193,7 @@ def get_mock_logs():
         "protocol": "TCP/IP", "port": 22, "packet_size": 4821,
         "domain": "Maintenance",
         "anomaly_score": 0.847,
-        "anomaly_reason": "Packet size 9.4× above baseline; SSH to avionics domain (lateral movement)",
+        "anomaly_reason": "Packet size 9.4x above baseline; SSH to avionics domain (lateral movement)",
         "flagged": True,
         "hash": "ff3a9c12de456b78", "prev_hash": "ab12cd34ef56gh78",
         "rsa_signature": "RSA-847291", "chain_valid": True
@@ -215,8 +215,8 @@ def get_mock_logs():
         e["id"] = i + 1
     return pd.DataFrame(events)
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 🔌 INTEGRATION POINT B — TEAMMATE 1 (Anomaly Detection + SHAP + LLM)
+# 
+#  INTEGRATION POINT B - TEAMMATE 1 (Anomaly Detection + SHAP + LLM)
 # When teammate's FastAPI is ready, replace MOCK_SHAP and chatbot responses with:
 #
 #   import requests
@@ -228,7 +228,7 @@ def get_mock_logs():
 #       r = requests.post("http://localhost:8000/chat",
 #           json={"question": question, "logs": context_logs})
 #       return r.json()["answer"]
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 MOCK_SHAP = {
     "packet_size": 0.41,
@@ -247,87 +247,87 @@ EU Part-IS (Regulation 2023/203) requires aviation organisations to:
 """
 
 MOCK_CHAT_RESPONSES = {
-    "default": "I analysed the log chain. No additional anomalies found beyond the 2 flagged events. Chain integrity is verified across all 20 entries. All RSA signatures valid.",
-    "09:55": "At 09:55 UTC, I detected a CRITICAL anomaly. Source MAINT-05 (Maintenance domain) attempted an SSH connection (port 22) to AVIONICS-NET with a packet size of 4,821 bytes — 9.4× above baseline. This is consistent with lateral movement from maintenance into avionics domain. SHAP primary driver: packet_size (0.41).",
-    "anomal": "2 anomalies detected this session:\n\n1. [CRITICAL · 09:55] MAINT-05 → AVIONICS-NET · Score 0.847 · SSH lateral movement · packet size 4,821B\n\n2. [HIGH · 10:12] EFB-03 → AVIONICS-NET · Score 0.762 · Modbus port 502 cross-domain violation · 3,204B\n\nBoth events are cryptographically sealed in the hash chain.",
+    "default": "Chain integrity verified across all 20 entries. No tampering detected. RSA signatures valid.",
+    "09:55": "Sequence #847 | CRITICAL\nFrom: MAINT-05 -> To: AVIONICS-NET | SSH port 22\nAnomaly Score: 0.847\n\nWhy flagged: Lateral movement from maintenance to avionics. Packet size 4,821B (9.4x baseline) is the primary SHAP driver.\n\nSHAP reasons: packet_size (0.41), port (0.28), source_device (0.18)\n\nRelated evidence: 2 connection(s) found.\nChain trust: Trusted\n\nNext steps:\n1. Preserve evidence.\n2. Inspect MAINT-05 and AVIONICS-NET for unauthorized access.\n3. Check graph edges for attack pattern.\n4. Assess risk per IS.I.OR.205.\n5. Record internally (IS.I.OR.215). Escalate if safety-critical (IS.I.OR.230).",
+    "anomal": "Graph: 24 nodes, 31 relationships\n\nTop anomalies to investigate:\n1. Seq #847 | CRITICAL | MAINT-05 -> AVIONICS-NET (SSH) - Lateral movement, packet size 4,821B vs baseline ~450B\n2. Seq #912 | HIGH | EFB-03 -> AVIONICS-NET (Modbus) - Cross-domain port 502 violation, 3,204B\n\nKey relationships:\n- MAINT-05 -> AVIONICS-NET: same source cross-domain event\n- EFB-03 -> AVIONICS-NET: same target anomaly pattern",
     "chain": f"Hash chain integrity: VERIFIED. All 20 entries validated. RSA signature check: PASSED. No tampering detected. Last verified: {datetime.now().strftime('%H:%M:%S UTC')}",
-    "maint": "MAINT-05 appears in 3 log entries. 1 flagged as CRITICAL (09:55 UTC). Device connected to AVIONICS-NET via SSH — outside its expected network domain. Recommend immediate quarantine and forensic imaging of MAINT-05.",
-    "part-is": f"Under EU Part-IS (Reg. 2023/203):\n\n{PART_IS_CONTEXT}\n\nBlueBox has recorded 2 reportable incidents this session. The generated PDF report satisfies Part-IS documentation requirements.",
-    "shap": "SHAP attribution for the CRITICAL anomaly (MAINT-05):\n\n• packet_size: 0.41 — PRIMARY DRIVER (4,821B vs baseline ~450B)\n• port: 0.28 — SSH port 22 is unexpected from maintenance domain\n• source_device: 0.18 — MAINT-05 has no prior AVIONICS-NET access history\n• protocol: 0.09 — TCP/IP cross-domain is anomalous\n• frequency: 0.04 — minor contributor"
+    "maint": "Sequence #847 | CRITICAL\nFrom: MAINT-05 -> To: AVIONICS-NET | SSH\nAnomaly Score: 0.847\n\nWhy flagged: Device MAINT-05 attempted SSH to AVIONICS-NET (outside expected domain).\n\nNext steps:\n1. Preserve evidence.\n2. Inspect MAINT-05 for unauthorized SSH commands.\n3. Check if connection was blocked or successful.\n4. Assess risk per IS.I.OR.205.\n5. Quarantine MAINT-05 if connection succeeded.",
+    "part-is": "== Part-IS Compliance Readiness ==\nEvidence records: 20\nWith explanations (SHAP): 18\nAnomalies detected: 2\nChain verification: Trusted\nDocumentation: 1 regulation document(s) uploaded\n\nReport Status:\n- Can export evidence: Yes\n- Chain integrity: Ready\n- Internal reporting: Record findings per IS.I.OR.215\n- External escalation: Follow org procedure per IS.I.OR.230 if safety-critical",
+    "shap": "SHAP attribution for Sequence #847 (CRITICAL):\n- packet_size: 0.41 - PRIMARY (4,821B vs baseline ~450B)\n- port: 0.28 - SSH port 22 unexpected from maintenance\n- source_device: 0.18 - MAINT-05 has no prior AVIONICS access\n- protocol: 0.09 - TCP/IP cross-domain anomalous\n- frequency: 0.04 - minor contributor"
 }
 
-# ─── SIDEBAR ───────────────────────────────────────────────────────────────────
+#  SIDEBAR 
 with st.sidebar:
     st.markdown("""
     <div style='text-align:center; padding:16px 0 8px 0;'>
-      <span style='font-family:Share Tech Mono,monospace; font-size:1.4rem; color:#4a9eff; letter-spacing:0.2em;'>■ BLUEBOX</span><br>
+      <span style='font-family:Share Tech Mono,monospace; font-size:1.4rem; color:#4a9eff; letter-spacing:0.2em;'>BLUEBOX</span><br>
       <span style='font-size:0.7rem; color:#4a6b8a; letter-spacing:0.1em;'>CYBER FORENSIC RECORDER</span>
     </div>
     """, unsafe_allow_html=True)
     st.divider()
 
-    st.markdown("<span style='font-family:Share Tech Mono,monospace; font-size:0.7rem; color:#4a9eff; letter-spacing:0.1em;'>▸ SYSTEM STATUS</span>", unsafe_allow_html=True)
-    st.markdown("<span class='badge-ok'>● CHAIN INTEGRITY: OK</span><br><br>", unsafe_allow_html=True)
-    st.markdown("<span class='badge-warn'>● ANOMALIES DETECTED: 2</span><br><br>", unsafe_allow_html=True)
-    st.markdown("<span class='badge-ok'>● LOGGER: ACTIVE</span><br><br>", unsafe_allow_html=True)
-    st.markdown("<span class='badge-ok'>● RSA SIGNATURES: VALID</span>", unsafe_allow_html=True)
+    st.markdown("<span style='font-family:Share Tech Mono,monospace; font-size:0.7rem; color:#4a9eff; letter-spacing:0.1em;'>> SYSTEM STATUS</span>", unsafe_allow_html=True)
+    st.markdown("<span class='badge-ok'>- CHAIN INTEGRITY: OK</span><br><br>", unsafe_allow_html=True)
+    st.markdown("<span class='badge-warn'>- ANOMALIES DETECTED: 2</span><br><br>", unsafe_allow_html=True)
+    st.markdown("<span class='badge-ok'>- LOGGER: ACTIVE</span><br><br>", unsafe_allow_html=True)
+    st.markdown("<span class='badge-ok'>- RSA SIGNATURES: VALID</span>", unsafe_allow_html=True)
 
     st.divider()
-    st.markdown("<span style='font-family:Share Tech Mono,monospace; font-size:0.7rem; color:#4a9eff; letter-spacing:0.1em;'>▸ FLIGHT INFO</span>", unsafe_allow_html=True)
+    st.markdown("<span style='font-family:Share Tech Mono,monospace; font-size:0.7rem; color:#4a9eff; letter-spacing:0.1em;'>> FLIGHT INFO</span>", unsafe_allow_html=True)
     st.markdown("""
     <div style='font-family:Share Tech Mono,monospace; font-size:0.75rem; color:#6b9ac4; line-height:2;'>
     FLIGHT &nbsp;&nbsp;&nbsp;: SQ321<br>
     AIRCRAFT : A350-900<br>
-    ROUTE &nbsp;&nbsp;&nbsp;: SIN → LHR<br>
+    ROUTE &nbsp;&nbsp;&nbsp;: SIN -> LHR<br>
     DATE &nbsp;&nbsp;&nbsp;&nbsp;: 2026-04-30<br>
-    SESSION &nbsp;: 09:00–10:30 UTC
+    SESSION &nbsp;: 09:00-10:30 UTC
     </div>
     """, unsafe_allow_html=True)
 
     st.divider()
-    st.markdown("<span style='font-family:Share Tech Mono,monospace; font-size:0.7rem; color:#4a9eff; letter-spacing:0.1em;'>▸ NETWORK DOMAINS</span>", unsafe_allow_html=True)
-    st.markdown("<div class='domain-card domain-avionics'>✈ AVIONICS<br><span style='font-size:0.65rem;'>ACARS-01 · CMU-02</span></div>", unsafe_allow_html=True)
-    st.markdown("<div class='domain-card domain-cabin'>🛋 CABIN<br><span style='font-size:0.65rem;'>IFE-04 · PASS-SRV</span></div>", unsafe_allow_html=True)
-    st.markdown("<div class='domain-card domain-maintenance'>🔧 MAINTENANCE<br><span style='font-size:0.65rem;'>MAINT-05 · EFB-03</span></div>", unsafe_allow_html=True)
+    st.markdown("<span style='font-family:Share Tech Mono,monospace; font-size:0.7rem; color:#4a9eff; letter-spacing:0.1em;'>> NETWORK DOMAINS</span>", unsafe_allow_html=True)
+    st.markdown("<div class='domain-card domain-avionics'> AVIONICS<br><span style='font-size:0.65rem;'>ACARS-01 - CMU-02</span></div>", unsafe_allow_html=True)
+    st.markdown("<div class='domain-card domain-cabin'> CABIN<br><span style='font-size:0.65rem;'>IFE-04 - PASS-SRV</span></div>", unsafe_allow_html=True)
+    st.markdown("<div class='domain-card domain-maintenance'> MAINTENANCE<br><span style='font-size:0.65rem;'>MAINT-05 - EFB-03</span></div>", unsafe_allow_html=True)
 
     st.divider()
     page = st.radio(
         "NAVIGATE",
-        ["📊 Dashboard", "🔗 Chain Integrity", "▶ Forensic Replay", "💬 LLM Chatbot", "📄 Report"],
+        ["Dashboard", "Chain Integrity", "Forensic Replay", "LLM Chatbot", "Report"],
         label_visibility="collapsed"
     )
 
-# ─── HEADER ────────────────────────────────────────────────────────────────────
+#  HEADER 
 st.markdown("""
 <div class='bb-header'>
-  <h1>■ BLUEBOX</h1>
-  <p>Cyber Forensic Black Box &nbsp;|&nbsp; Airbus Fly Your Ideas 2026 &nbsp;|&nbsp; Team 83-7438 &nbsp;|&nbsp; SQ321 · SIN→LHR · 2026-04-30</p>
+  <h1>BLUEBOX</h1>
+  <p>Cyber Forensic Black Box &nbsp;|&nbsp; Airbus Fly Your Ideas 2026 &nbsp;|&nbsp; Team 83-7438 &nbsp;|&nbsp; SQ321 - SIN->LHR - 2026-04-30</p>
 </div>
 """, unsafe_allow_html=True)
 
 df = get_mock_logs()
 
-# ══════════════════════════════════════════════════════════════════════════════
-# PAGE 1: DASHBOARD — Alerts + SHAP Advisory Panel
-# ══════════════════════════════════════════════════════════════════════════════
-if page == "📊 Dashboard":
+# 
+# PAGE 1: DASHBOARD - Alerts + SHAP Advisory Panel
+# 
+if page == "Dashboard":
 
     # KPI row
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("TOTAL EVENTS", str(len(df)), "logged this session")
-    c2.metric("ANOMALIES", str(df["flagged"].sum()), delta="▲ HIGH SEVERITY", delta_color="inverse")
+    c2.metric("ANOMALIES", str(df["flagged"].sum()), delta="HIGH SEVERITY", delta_color="inverse")
     c3.metric("CHAIN STATUS", "VERIFIED", f"{len(df)}/{len(df)} valid")
     c4.metric("RSA SIGNATURES", "ALL VALID", "TPM verified")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
     # Network domain traffic summary
-    st.markdown("<div class='panel-title'>🌐 NETWORK DOMAIN TRAFFIC</div>", unsafe_allow_html=True)
+    st.markdown("<div class='panel-title'> NETWORK DOMAIN TRAFFIC</div>", unsafe_allow_html=True)
     d1, d2, d3 = st.columns(3)
     for col, domain, color, icon in [
-        (d1, "Avionics", "#00e676", "✈"),
-        (d2, "Cabin", "#4a9eff", "🛋"),
-        (d3, "Maintenance", "#ff9100", "🔧")
+        (d1, "Avionics", "#00e676", ""),
+        (d2, "Cabin", "#4a9eff", ""),
+        (d3, "Maintenance", "#ff9100", "")
     ]:
         domain_df = df[df["domain"] == domain]
         flagged_count = domain_df["flagged"].sum()
@@ -339,14 +339,14 @@ if page == "📊 Dashboard":
                       letter-spacing:0.1em; margin:4px 0;'>{domain.upper()} DOMAIN</div>
           <div style='font-size:1.6rem; color:#e0f0ff; font-family:Share Tech Mono,monospace;'>{len(domain_df)}</div>
           <div style='font-size:0.72rem; color:#6b9ac4;'>events logged</div>
-          {"<div style='color:#ff1744; font-size:0.75rem; margin-top:6px; font-family:Share Tech Mono,monospace;'>⚠ " + str(flagged_count) + " ANOMAL" + ("Y" if flagged_count==1 else "IES") + "</div>" if flagged_count > 0 else "<div style='color:#00e676; font-size:0.72rem; margin-top:6px;'>✓ CLEAN</div>"}
+          {"<div style='color:#ff1744; font-size:0.75rem; margin-top:6px; font-family:Share Tech Mono,monospace;'>WARN " + str(flagged_count) + " ANOMAL" + ("Y" if flagged_count==1 else "IES") + "</div>" if flagged_count > 0 else "<div style='color:#00e676; font-size:0.72rem; margin-top:6px;'>OK CLEAN</div>"}
         </div>
         """, unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
     # Anomaly alerts
-    st.markdown("<div class='panel-title'>⚠ ANOMALY ALERTS + SHAP ADVISORY</div>", unsafe_allow_html=True)
+    st.markdown("<div class='panel-title'>WARN ANOMALY ALERTS + SHAP ADVISORY</div>", unsafe_allow_html=True)
     for _, row in df[df["flagged"]].iterrows():
         severity = "CRITICAL" if row["anomaly_score"] > 0.8 else "HIGH"
         badge_color = "#ff1744" if severity == "CRITICAL" else "#ff9100"
@@ -355,15 +355,15 @@ if page == "📊 Dashboard":
                     border-radius:6px; padding:14px 18px; margin-bottom:12px;'>
           <div style='display:flex; justify-content:space-between; align-items:center;'>
             <span style='font-family:Share Tech Mono,monospace; color:{badge_color}; font-size:0.85rem; letter-spacing:0.1em;'>
-              ■ ANOMALY DETECTED — {row['timestamp'].strftime('%H:%M:%S UTC')}
+               ANOMALY DETECTED - {row['timestamp'].strftime('%H:%M:%S UTC')}
             </span>
             <span style='background:#0a0a0a; border:1px solid {badge_color}; color:{badge_color};
                          padding:3px 12px; border-radius:20px; font-family:Share Tech Mono,monospace; font-size:0.75rem;'>
-              {severity} · Score: {row['anomaly_score']}
+              {severity} - Score: {row['anomaly_score']}
             </span>
           </div>
           <div style='margin-top:10px; font-size:0.82rem; color:#c9a0a0; line-height:2;'>
-            <b>Source:</b> {row['source']} ({row['domain']} Domain) &nbsp;→&nbsp;
+            <b>Source:</b> {row['source']} ({row['domain']} Domain) &nbsp;->&nbsp;
             <b>Dest:</b> {row['destination']}<br>
             <b>Protocol:</b> {row['protocol']} &nbsp;|&nbsp;
             <b>Port:</b> {row['port']} &nbsp;|&nbsp;
@@ -371,10 +371,10 @@ if page == "📊 Dashboard":
           </div>
           <div style='margin-top:8px; background:#0d0608; border-radius:4px; padding:8px 12px;
                       font-family:Share Tech Mono,monospace; font-size:0.75rem; color:#ff9b9b;'>
-            🧠 SHAP REASON: {row['anomaly_reason']}
+            SHAP REASON: {row['anomaly_reason']}
           </div>
           <div style='margin-top:6px; font-size:0.7rem; font-family:Share Tech Mono,monospace; color:#6b4a4a;'>
-            HASH: {row['hash']} &nbsp;|&nbsp; RSA: {row['rsa_signature']} &nbsp;|&nbsp; CHAIN: ✓ VERIFIED
+            HASH: {row['hash']} &nbsp;|&nbsp; RSA: {row['rsa_signature']} &nbsp;|&nbsp; CHAIN: OK VERIFIED
           </div>
         </div>
         """, unsafe_allow_html=True)
@@ -384,7 +384,7 @@ if page == "📊 Dashboard":
     # SHAP chart + anomaly score chart
     col_a, col_b = st.columns(2)
     with col_a:
-        st.markdown("<div class='panel-title'>🧠 SHAP FEATURE ATTRIBUTION</div>", unsafe_allow_html=True)
+        st.markdown("<div class='panel-title'>SHAP FEATURE ATTRIBUTION</div>", unsafe_allow_html=True)
         st.caption("Why was the CRITICAL anomaly flagged? (MAINT-05 event)")
         shap_df = pd.DataFrame({
             "Feature": list(MOCK_SHAP.keys()),
@@ -392,7 +392,7 @@ if page == "📊 Dashboard":
         }).sort_values("SHAP Value", ascending=True)
         st.bar_chart(shap_df.set_index("Feature"), color="#ff1744", height=220)
     with col_b:
-        st.markdown("<div class='panel-title'>📈 ANOMALY SCORES — ALL EVENTS</div>", unsafe_allow_html=True)
+        st.markdown("<div class='panel-title'> ANOMALY SCORES - ALL EVENTS</div>", unsafe_allow_html=True)
         st.caption("Scores above 0.5 are flagged as anomalous")
         chart_df = df[["timestamp", "anomaly_score"]].copy().set_index("timestamp")
         st.line_chart(chart_df, color="#4a9eff", height=220)
@@ -400,66 +400,66 @@ if page == "📊 Dashboard":
     st.markdown("<br>", unsafe_allow_html=True)
 
     # Full event log
-    st.markdown("<div class='panel-title'>📋 FULL EVENT LOG</div>", unsafe_allow_html=True)
+    st.markdown("<div class='panel-title'> FULL EVENT LOG</div>", unsafe_allow_html=True)
     display_df = df[["id", "timestamp", "domain", "source", "destination",
                       "protocol", "port", "packet_size", "anomaly_score",
                       "anomaly_reason", "flagged", "chain_valid"]].copy()
     display_df["timestamp"] = display_df["timestamp"].dt.strftime("%H:%M:%S")
-    display_df["flagged"] = display_df["flagged"].map({True: "⚠ YES", False: "—"})
-    display_df["chain_valid"] = display_df["chain_valid"].map({True: "✓", False: "✗"})
+    display_df["flagged"] = display_df["flagged"].map({True: "WARN YES", False: "-"})
+    display_df["chain_valid"] = display_df["chain_valid"].map({True: "OK", False: "FAIL"})
     st.dataframe(display_df, use_container_width=True, height=300)
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 # PAGE 2: CHAIN INTEGRITY PANEL
-# ══════════════════════════════════════════════════════════════════════════════
-elif page == "🔗 Chain Integrity":
+# 
+elif page == "Chain Integrity":
 
-    st.markdown("<div class='panel-title'>🔗 CHAIN INTEGRITY PANEL</div>", unsafe_allow_html=True)
+    st.markdown("<div class='panel-title'> CHAIN INTEGRITY PANEL</div>", unsafe_allow_html=True)
 
     # Integrity summary
     st.markdown("""
     <div style='background:#0a1a0a; border:1px solid #00c853; border-radius:6px; padding:14px 18px; margin-bottom:16px;'>
       <span style='font-family:Share Tech Mono,monospace; color:#00e676; font-size:0.85rem; letter-spacing:0.1em;'>
-        ✓ SHA-256 HASH CHAIN: VERIFIED &nbsp;|&nbsp; RSA SIGNATURES: ALL VALID &nbsp;|&nbsp;
+        OK SHA-256 HASH CHAIN: VERIFIED &nbsp;|&nbsp; RSA SIGNATURES: ALL VALID &nbsp;|&nbsp;
         TPM KEY: ACTIVE &nbsp;|&nbsp; NO TAMPERING DETECTED
       </span>
     </div>
     """, unsafe_allow_html=True)
 
     # How it works
-    with st.expander("ℹ How the hash chain works"):
+    with st.expander("Info How the hash chain works"):
         st.markdown("""
         <div style='font-size:0.82rem; color:#6b9ac4; line-height:2;'>
         <b>HashN = f(LogN + Hash(N-1))</b><br><br>
         Every network event is hashed using <b>SHA-256</b> combined with the previous entry's hash.
         Each entry is also signed with an <b>RSA private key</b> stored in a Trusted Platform Module (TPM).<br><br>
-        • Modify any entry → all subsequent hashes break → detected instantly<br>
-        • Delete any entry → chain gap detected → integrity fails<br>
-        • Admin access cannot silently erase evidence — the math prevents it
+        - Modify any entry -> all subsequent hashes break -> detected instantly<br>
+        - Delete any entry -> chain gap detected -> integrity fails<br>
+        - Admin access cannot silently erase evidence - the math prevents it
         </div>
         """, unsafe_allow_html=True)
 
     # Hash verification steps
-    st.markdown("<div class='panel-title'>▸ HASH VERIFICATION + RSA SIGN CHECK</div>", unsafe_allow_html=True)
+    st.markdown("<div class='panel-title'>> HASH VERIFICATION + RSA SIGN CHECK</div>", unsafe_allow_html=True)
     hc1, hc2, hc3 = st.columns(3)
     hc1.markdown("""
     <div style='background:#0a1a0a; border:1px solid #00c853; border-radius:6px; padding:12px; text-align:center;'>
       <div style='font-family:Share Tech Mono,monospace; color:#00e676; font-size:0.75rem;'>SHA-256 CHAIN</div>
-      <div style='font-size:1.4rem; margin:6px 0;'>✓</div>
+      <div style='font-size:1.4rem; margin:6px 0;'>OK</div>
       <div style='font-size:0.7rem; color:#4a9eff;'>20/20 entries valid</div>
     </div>
     """, unsafe_allow_html=True)
     hc2.markdown("""
     <div style='background:#0a1a0a; border:1px solid #00c853; border-radius:6px; padding:12px; text-align:center;'>
       <div style='font-family:Share Tech Mono,monospace; color:#00e676; font-size:0.75rem;'>RSA SIGNATURES</div>
-      <div style='font-size:1.4rem; margin:6px 0;'>✓</div>
+      <div style='font-size:1.4rem; margin:6px 0;'>OK</div>
       <div style='font-size:0.7rem; color:#4a9eff;'>TPM key verified</div>
     </div>
     """, unsafe_allow_html=True)
     hc3.markdown("""
     <div style='background:#0a1a0a; border:1px solid #00c853; border-radius:6px; padding:12px; text-align:center;'>
       <div style='font-family:Share Tech Mono,monospace; color:#00e676; font-size:0.75rem;'>APPEND-ONLY STORE</div>
-      <div style='font-size:1.4rem; margin:6px 0;'>✓</div>
+      <div style='font-size:1.4rem; margin:6px 0;'>OK</div>
       <div style='font-size:0.7rem; color:#4a9eff;'>SQLite locked</div>
     </div>
     """, unsafe_allow_html=True)
@@ -467,16 +467,16 @@ elif page == "🔗 Chain Integrity":
     st.markdown("<br>", unsafe_allow_html=True)
 
     # Chain entries
-    st.markdown("<div class='panel-title'>▸ FULL HASH CHAIN LOG</div>", unsafe_allow_html=True)
+    st.markdown("<div class='panel-title'>> FULL HASH CHAIN LOG</div>", unsafe_allow_html=True)
     for i, row in df.iterrows():
         entry_class = "chain-entry anomaly" if row["flagged"] else "chain-entry verified"
-        flag = " ⚠ ANOMALY" if row["flagged"] else " ✓"
+        flag = " WARN ANOMALY" if row["flagged"] else " OK"
         st.markdown(f"""
         <div class='{entry_class}'>
           [{row['id']:02d}] {row['timestamp'].strftime('%H:%M:%S')} &nbsp;|&nbsp;
           <b>{row['domain']}</b> &nbsp;|&nbsp;
-          {row['source']} → {row['destination']} &nbsp;|&nbsp;
-          {row['protocol']} · {row['packet_size']}B &nbsp;|&nbsp;
+          {row['source']} -> {row['destination']} &nbsp;|&nbsp;
+          {row['protocol']} - {row['packet_size']}B &nbsp;|&nbsp;
           HASH: {row['hash']} &nbsp;|&nbsp;
           SIG: {row['rsa_signature']}
           {flag}
@@ -486,28 +486,28 @@ elif page == "🔗 Chain Integrity":
     st.markdown("<br>", unsafe_allow_html=True)
 
     # Tamper simulation
-    st.markdown("<div class='panel-title'>🔬 TAMPER DETECTION SIMULATION</div>", unsafe_allow_html=True)
+    st.markdown("<div class='panel-title'> TAMPER DETECTION SIMULATION</div>", unsafe_allow_html=True)
     st.caption("Demonstrates what happens when an attacker tries to silently delete a log entry.")
-    if st.button("⚡ SIMULATE TAMPER ATTEMPT ON ENTRY #11"):
+    if st.button(" SIMULATE TAMPER ATTEMPT ON ENTRY #11"):
         with st.spinner("Simulating deletion of anomaly entry #11..."):
             time.sleep(1.5)
         st.markdown("""
         <div style='background:#1a0608; border:1px solid #ff1744; border-radius:6px; padding:14px 18px; margin-top:8px;'>
           <span style='font-family:Share Tech Mono,monospace; color:#ff1744; font-size:0.85rem; letter-spacing:0.05em;'>
-            ✗ TAMPER DETECTED<br>
-            Entry #11 deleted → Hash mismatch propagated across entries #12–20<br>
-            RSA signature chain invalidated → Forensic alert triggered<br><br>
+            FAIL TAMPER DETECTED<br>
+            Entry #11 deleted -> Hash mismatch propagated across entries #12-20<br>
+            RSA signature chain invalidated -> Forensic alert triggered<br><br>
             <span style='color:#ff9b9b;'>An attacker with full admin access CANNOT silently erase evidence.</span>
           </span>
         </div>
         """, unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 # PAGE 3: FORENSIC REPLAY
-# ══════════════════════════════════════════════════════════════════════════════
-elif page == "▶ Forensic Replay":
+# 
+elif page == "Forensic Replay":
 
-    st.markdown("<div class='panel-title'>▶ FORENSIC REPLAY</div>", unsafe_allow_html=True)
+    st.markdown("<div class='panel-title'> FORENSIC REPLAY</div>", unsafe_allow_html=True)
     st.markdown("""
     <div style='font-size:0.82rem; color:#6b9ac4; margin-bottom:16px; line-height:1.8;'>
     Step through the network event timeline to reconstruct exactly what happened during the flight.
@@ -541,10 +541,10 @@ elif page == "▶ Forensic Replay":
 
     col_prev, col_info, col_next = st.columns([1, 3, 1])
     with col_prev:
-        if st.button("◀ PREV") and st.session_state.replay_step > 0:
+        if st.button("< PREV") and st.session_state.replay_step > 0:
             st.session_state.replay_step -= 1
     with col_next:
-        if st.button("NEXT ▶") and st.session_state.replay_step < len(replay_df) - 1:
+        if st.button("NEXT ") and st.session_state.replay_step < len(replay_df) - 1:
             st.session_state.replay_step += 1
     with col_info:
         st.markdown(f"""
@@ -563,7 +563,7 @@ elif page == "▶ Forensic Replay":
         <div style='background:{spot_bg}; border:2px solid {spot_color}; border-radius:8px;
                     padding:18px 22px; margin:12px 0;'>
           <div style='font-family:Share Tech Mono,monospace; color:{spot_color}; font-size:0.9rem; letter-spacing:0.1em; margin-bottom:10px;'>
-            {"⚠ ANOMALOUS EVENT" if is_anomaly else "✓ NORMAL EVENT"} — {current['timestamp'].strftime('%H:%M:%S UTC')}
+            {"WARN ANOMALOUS EVENT" if is_anomaly else "OK NORMAL EVENT"} - {current['timestamp'].strftime('%H:%M:%S UTC')}
           </div>
           <div style='display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; font-size:0.82rem; color:#c9d6e3;'>
             <div><span style='color:#6b9ac4;'>SOURCE</span><br><b>{current['source']}</b></div>
@@ -576,37 +576,37 @@ elif page == "▶ Forensic Replay":
             <div><span style='color:#6b9ac4;'>HASH</span><br><b style='font-size:0.72rem;'>{current['hash']}</b></div>
             <div><span style='color:#6b9ac4;'>RSA SIG</span><br><b>{current['rsa_signature']}</b></div>
           </div>
-          {f"<div style='margin-top:12px; background:#0d0608; border-radius:4px; padding:8px 12px; font-family:Share Tech Mono,monospace; font-size:0.75rem; color:#ff9b9b;'>🧠 SHAP: {current['anomaly_reason']}</div>" if is_anomaly else ""}
+          {f"<div style='margin-top:12px; background:#0d0608; border-radius:4px; padding:8px 12px; font-family:Share Tech Mono,monospace; font-size:0.75rem; color:#ff9b9b;'>SHAP: {current['anomaly_reason']}</div>" if is_anomaly else ""}
         </div>
         """, unsafe_allow_html=True)
 
     # Timeline scroll view
-    st.markdown("<div class='panel-title' style='margin-top:16px;'>▸ FULL TIMELINE</div>", unsafe_allow_html=True)
+    st.markdown("<div class='panel-title' style='margin-top:16px;'>> FULL TIMELINE</div>", unsafe_allow_html=True)
     for i, (_, row) in enumerate(replay_df.iterrows()):
         is_current = (i == st.session_state.replay_step)
         entry_class = "replay-entry anomaly-replay" if row["flagged"] else ("replay-entry active" if is_current else "replay-entry")
-        marker = "▶ " if is_current else ("⚠ " if row["flagged"] else "  ")
+        marker = " " if is_current else ("WARN " if row["flagged"] else "  ")
         st.markdown(f"""
         <div class='{entry_class}'>
           {marker}[{i+1:02d}] {row['timestamp'].strftime('%H:%M:%S')} &nbsp;|&nbsp;
-          {row['domain']} &nbsp;|&nbsp; {row['source']} → {row['destination']} &nbsp;|&nbsp;
-          {row['protocol']} · {row['packet_size']}B &nbsp;|&nbsp; Score: {row['anomaly_score']}
+          {row['domain']} &nbsp;|&nbsp; {row['source']} -> {row['destination']} &nbsp;|&nbsp;
+          {row['protocol']} - {row['packet_size']}B &nbsp;|&nbsp; Score: {row['anomaly_score']}
         </div>
         """, unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 # PAGE 4: LLM CHATBOT with RAG (Part-IS)
-# ══════════════════════════════════════════════════════════════════════════════
-elif page == "💬 LLM Chatbot":
+# 
+elif page == "LLM Chatbot":
 
-    st.markdown("<div class='panel-title'>💬 LLM CHATBOT — RAG ENABLED (EU PART-IS)</div>", unsafe_allow_html=True)
+    st.markdown("<div class='panel-title'> LLM CHATBOT - RAG ENABLED (EU PART-IS)</div>", unsafe_allow_html=True)
     st.markdown("""
     <div style='font-size:0.82rem; color:#6b9ac4; margin-bottom:12px; line-height:1.8;'>
     Ask about any network event in plain English. The chatbot uses <b>Retrieval-Augmented Generation (RAG)</b>
-    grounded in EU Part-IS regulations — so answers are forensically accurate and regulation-aware.
+    grounded in EU Part-IS regulations - so answers are forensically accurate and regulation-aware.
     No cybersecurity training required.<br><br>
-    <b>Try:</b> "What happened at 09:55?" &nbsp;·&nbsp; "Show anomalies" &nbsp;·&nbsp;
-    "Is the chain valid?" &nbsp;·&nbsp; "What does Part-IS require?" &nbsp;·&nbsp; "Explain the SHAP results"
+    <b>Try:</b> "What happened at 09:55?" &nbsp;-&nbsp; "Show anomalies" &nbsp;-&nbsp;
+    "Is the chain valid?" &nbsp;-&nbsp; "What does Part-IS require?" &nbsp;-&nbsp; "Explain the SHAP results"
     </div>
     """, unsafe_allow_html=True)
 
@@ -614,15 +614,15 @@ elif page == "💬 LLM Chatbot":
     st.markdown("""
     <div style='background:#0a0e1a; border:1px solid #1e3a5f; border-radius:6px;
                 padding:8px 14px; margin-bottom:14px; font-family:Share Tech Mono,monospace; font-size:0.72rem; color:#4a6b8a;'>
-    📚 RAG CONTEXT LOADED: EU Part-IS Reg. 2023/203 &nbsp;·&nbsp; EASA Part-IS FAQ &nbsp;·&nbsp;
-    BlueBox Log Chain (20 entries) &nbsp;·&nbsp; SHAP Attribution Data
+    RAG RAG CONTEXT LOADED: EU Part-IS Reg. 2023/203 &nbsp;-&nbsp; EASA Part-IS FAQ &nbsp;-&nbsp;
+    BlueBox Log Chain (20 entries) &nbsp;-&nbsp; SHAP Attribution Data
     </div>
     """, unsafe_allow_html=True)
 
-    # ── 🔌 INTEGRATION POINT B ──────────────────────────────────────────────
+    #   INTEGRATION POINT B 
     # Replace mock responses below with:
     #   response = query_chatbot(user_input, df.to_dict())
-    # ────────────────────────────────────────────────────────────────────────
+    # 
 
     if "messages" not in st.session_state:
         st.session_state.messages = [
@@ -631,7 +631,7 @@ elif page == "💬 LLM Chatbot":
 
     for msg in st.session_state.messages:
         css_class = "chat-user" if msg["role"] == "user" else "chat-bot"
-        prefix = "👤 ENGINEER" if msg["role"] == "user" else "🤖 BLUEBOX AI (RAG)"
+        prefix = "ENGINEER" if msg["role"] == "user" else "BLUEBOX AI (RAG)"
         st.markdown(f"""
         <div class='{css_class}'>
           <span style='font-size:0.7rem; opacity:0.6; letter-spacing:0.1em;'>{prefix}</span><br>
@@ -663,24 +663,24 @@ elif page == "💬 LLM Chatbot":
         st.session_state.messages.append({"role": "bot", "content": response})
         st.rerun()
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 # PAGE 5: ANALYSIS REPORT + COMPLIANCE ADVISORY
-# ══════════════════════════════════════════════════════════════════════════════
-elif page == "📄 Report":
+# 
+elif page == "Report":
 
-    st.markdown("<div class='panel-title'>📄 ANALYSIS REPORT + COMPLIANCE ADVISORY</div>", unsafe_allow_html=True)
+    st.markdown("<div class='panel-title'> ANALYSIS REPORT + COMPLIANCE ADVISORY</div>", unsafe_allow_html=True)
 
     # Compliance advisory panel
     st.markdown("""
     <div style='background:#0a1220; border:1px solid #4a9eff; border-left:4px solid #4a9eff;
                 border-radius:6px; padding:16px 20px; margin-bottom:20px;'>
       <div style='font-family:Share Tech Mono,monospace; color:#4a9eff; font-size:0.8rem;
-                  letter-spacing:0.1em; margin-bottom:10px;'>⚖ EU PART-IS COMPLIANCE ADVISORY</div>
+                  letter-spacing:0.1em; margin-bottom:10px;'>Part-IS EU PART-IS COMPLIANCE ADVISORY</div>
       <div style='font-size:0.82rem; color:#c9d6e3; line-height:2;'>
         Under <b>EU Regulation 2023/203 (Part-IS)</b>, effective 22 February 2026, your organisation is legally required to:<br>
-        <span style='color:#00e676;'>✓</span> Investigate and document cybersecurity incidents &nbsp;·&nbsp;
-        <span style='color:#00e676;'>✓</span> Maintain forensic-grade evidence &nbsp;·&nbsp;
-        <span style='color:#00e676;'>✓</span> Report to competent authorities<br><br>
+        <span style='color:#00e676;'>OK</span> Investigate and document cybersecurity incidents &nbsp;-&nbsp;
+        <span style='color:#00e676;'>OK</span> Maintain forensic-grade evidence &nbsp;-&nbsp;
+        <span style='color:#00e676;'>OK</span> Report to competent authorities<br><br>
         <b>This session:</b> 2 reportable incidents detected. BlueBox has generated cryptographically verified,
         court-admissible evidence. The report below satisfies Part-IS documentation requirements.
       </div>
@@ -695,7 +695,7 @@ elif page == "📄 Report":
                     font-size:0.82rem; line-height:2; font-family:Share Tech Mono,monospace; color:#6b9ac4;'>
         FLIGHT &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: SQ321<br>
         AIRCRAFT &nbsp;&nbsp;&nbsp;: A350-900 (9V-SMF)<br>
-        ROUTE &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: SIN → LHR<br>
+        ROUTE &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: SIN -> LHR<br>
         DATE &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: 2026-04-30<br>
         EVENTS LOGGED : 20<br>
         ANOMALIES &nbsp;&nbsp;: 2 (CRITICAL + HIGH)<br>
@@ -708,20 +708,20 @@ elif page == "📄 Report":
         <div style='background:#0d1a2e; border:1px solid #1e3a5f; border-radius:6px; padding:16px;
                     font-size:0.82rem; line-height:2; color:#6b9ac4;'>
         <b>Report includes:</b><br>
-        ✓ Executive incident summary<br>
-        ✓ Network domain breakdown (Avionics/Cabin/Maintenance)<br>
-        ✓ Full verified hash chain log<br>
-        ✓ SHAP feature attribution table<br>
-        ✓ Anomaly event detail (×2)<br>
-        ✓ Recommended engineer actions<br>
-        ✓ EU Part-IS compliance statement<br>
-        ✓ Chain integrity certificate
+        OK Executive incident summary<br>
+        OK Network domain breakdown (Avionics/Cabin/Maintenance)<br>
+        OK Full verified hash chain log<br>
+        OK SHAP feature attribution table<br>
+        OK Anomaly event detail (x2)<br>
+        OK Recommended engineer actions<br>
+        OK EU Part-IS compliance statement<br>
+        OK Chain integrity certificate
         </div>
         """, unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    if st.button("⬇ GENERATE & DOWNLOAD PDF REPORT"):
+    if st.button("Download GENERATE & DOWNLOAD PDF REPORT"):
         with st.spinner("Generating forensic report..."):
             time.sleep(1.5)
             try:
@@ -761,8 +761,8 @@ elif page == "📄 Report":
                 story.append(Paragraph("1. FLIGHT INFORMATION", head_style))
                 flight_data = [
                     ["Flight", "SQ321", "Aircraft", "A350-900 (9V-SMF)"],
-                    ["Route", "SIN → LHR", "Date", "2026-04-30"],
-                    ["Session", "09:00–10:30 UTC", "Events Logged", "20"],
+                    ["Route", "SIN -> LHR", "Date", "2026-04-30"],
+                    ["Session", "09:00-10:30 UTC", "Events Logged", "20"],
                     ["Anomalies", "2 (CRITICAL + HIGH)", "Chain Status", "VERIFIED"],
                     ["Regulation", "EU Part-IS 2023/203", "RSA Signatures", "ALL VALID"],
                 ]
@@ -786,7 +786,7 @@ elif page == "📄 Report":
                     d = df[df["domain"] == domain]
                     flags = d["flagged"].sum()
                     domain_summary.append([domain, str(len(d)), str(flags),
-                                           "⚠ INCIDENTS DETECTED" if flags > 0 else "CLEAN"])
+                                           "WARN INCIDENTS DETECTED" if flags > 0 else "CLEAN"])
                 dt = Table(domain_summary, colWidths=[4*cm, 3*cm, 3*cm, 7*cm])
                 dt.setStyle(TableStyle([
                     ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
@@ -833,7 +833,7 @@ elif page == "📄 Report":
                 story.append(Paragraph("4. SHAP FEATURE ATTRIBUTION", head_style))
                 story.append(Paragraph(
                     "SHAP (SHapley Additive exPlanations) identifies which features drove each anomaly score. "
-                    "Primary driver for the CRITICAL event: packet_size (0.41) — 9.4× above baseline.", body_style))
+                    "Primary driver for the CRITICAL event: packet_size (0.41) - 9.4x above baseline.", body_style))
                 shap_data = [["Feature", "SHAP Value", "Interpretation"]] + [
                     [k, str(v), "Primary driver" if v > 0.3 else "Contributing" if v > 0.1 else "Minor"]
                     for k, v in MOCK_SHAP.items()
@@ -885,12 +885,12 @@ elif page == "📄 Report":
                 buffer.seek(0)
 
                 st.download_button(
-                    label="📥 DOWNLOAD PDF REPORT",
+                    label="Download DOWNLOAD PDF REPORT",
                     data=buffer,
                     file_name=f"BlueBox_PartIS_Report_SQ321_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
                     mime="application/pdf"
                 )
-                st.success("✓ Report generated. Click above to download.")
+                st.success("OK Report generated. Click above to download.")
 
             except Exception as e:
                 st.error(f"Report generation error: {e}")

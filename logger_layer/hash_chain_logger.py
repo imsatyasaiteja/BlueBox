@@ -8,6 +8,7 @@ import csv
 import json
 import shutil
 import sqlite3
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -15,6 +16,7 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator, TypedDict
 
 from backend.shared.paths import (
+    PROJECT_ROOT,
     RUNTIME_AI_EVIDENCE_LEDGER_DIR,
     RUNTIME_KEYS_DIR,
     RUNTIME_RECOVERY_LEDGER_DIR,
@@ -56,7 +58,11 @@ DEFAULT_RECOVERY_LEDGER = RUNTIME_RECOVERY_LEDGER_DIR / "bluebox_recovery.jsonl"
 DEFAULT_AI_EVIDENCE_LEDGER = RUNTIME_AI_EVIDENCE_LEDGER_DIR / "bluebox_ai_evidence.jsonl"
 DEFAULT_PRIVATE_KEY = RUNTIME_KEYS_DIR / "logger_private.json"
 DEFAULT_PUBLIC_KEY = RUNTIME_KEYS_DIR / "logger_public.json"
+DEFAULT_ATTACKER_IP = "203.0.113.45"
 PCAP_CHUNK_BYTES = 64 * 1024
+SQLITE_BUSY_TIMEOUT_MS = 30_000
+SQLITE_BUSY_RETRY_ATTEMPTS = 5
+SQLITE_BUSY_RETRY_DELAY_SEC = 0.2
 RESERVED_METADATA_KEYS = {
     "record_version",
     "storage",
@@ -64,6 +70,38 @@ RESERVED_METADATA_KEYS = {
     "associated_data_sha256",
     "signer_provider",
 }
+
+
+def source_file_candidates(source_file: str | Path) -> list[str]:
+    """Build source path variants used by live ingest and legacy attachments."""
+    raw = str(source_file)
+    candidates: list[str] = []
+
+    def add(value: str | Path) -> None:
+        text = str(value)
+        if text and text not in candidates:
+            candidates.append(text)
+
+    add(raw)
+    if "://" in raw:
+        return candidates
+
+    path = Path(raw).expanduser()
+    rooted_path = path if path.is_absolute() else PROJECT_ROOT / path
+    add(path)
+    add(rooted_path)
+    add(rooted_path.resolve())
+    add(rooted_path.as_posix())
+    add(rooted_path.resolve().as_posix())
+
+    try:
+        relative_path = rooted_path.resolve().relative_to(PROJECT_ROOT)
+        add(relative_path)
+        add(relative_path.as_posix())
+    except ValueError:
+        pass
+
+    return candidates
 
 
 @dataclass(frozen=True)
@@ -97,14 +135,16 @@ class HashChainLogger:
         ai_evidence_ledger_path: Path = DEFAULT_AI_EVIDENCE_LEDGER,
         require_tpm: bool = False,
     ) -> None:
-        self.db_path = Path(db_path)
-        self.private_key_path = Path(private_key_path)
-        self.public_key_path = Path(public_key_path)
-        self.data_key_path = Path(data_key_path)
-        self.recovery_ledger_path = Path(recovery_ledger_path)
-        self.ai_evidence_ledger_path = Path(ai_evidence_ledger_path)
-        self.anchor_log_path = anchor_log_path or self.db_path.with_name(
-            f"{self.db_path.name}.anchors.jsonl"
+        self.db_path = Path(db_path).expanduser().resolve()
+        self.private_key_path = Path(private_key_path).expanduser().resolve()
+        self.public_key_path = Path(public_key_path).expanduser().resolve()
+        self.data_key_path = Path(data_key_path).expanduser().resolve()
+        self.recovery_ledger_path = Path(recovery_ledger_path).expanduser().resolve()
+        self.ai_evidence_ledger_path = Path(ai_evidence_ledger_path).expanduser().resolve()
+        self.anchor_log_path = (
+            Path(anchor_log_path).expanduser().resolve()
+            if anchor_log_path
+            else self.db_path.with_name(f"{self.db_path.name}.anchors.jsonl")
         )
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.anchor_log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -119,27 +159,60 @@ class HashChainLogger:
         self.data_key = load_or_create_data_key(self.data_key_path)
         self._explanation_cache: dict[tuple[str, int], dict[str, object] | None] = {}
         self._init_db()
+        self.ensure_recovery_ledger_initialized()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA synchronous = FULL")
-        conn.execute("PRAGMA busy_timeout = 5000")
-        return conn
+        conn = sqlite3.connect(
+            self.db_path,
+            timeout=SQLITE_BUSY_TIMEOUT_MS / 1000,
+        )
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA synchronous = FULL")
+            conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+            return conn
+        except Exception:
+            conn.close()
+            raise
 
     def _connect_without_init(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA synchronous = FULL")
-        conn.execute("PRAGMA busy_timeout = 5000")
-        return conn
+        conn = sqlite3.connect(
+            self.db_path,
+            timeout=SQLITE_BUSY_TIMEOUT_MS / 1000,
+        )
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA synchronous = FULL")
+            conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+            return conn
+        except Exception:
+            conn.close()
+            raise
+
+    @staticmethod
+    def _is_sqlite_busy(exc: sqlite3.Error) -> bool:
+        message = str(exc).lower()
+        return "database is locked" in message or "database is busy" in message
+
+    def _anchor_current_head_with_retry(self) -> dict[str, object] | None:
+        delay = SQLITE_BUSY_RETRY_DELAY_SEC
+        for attempt in range(SQLITE_BUSY_RETRY_ATTEMPTS):
+            try:
+                return self.anchor_current_head()
+            except sqlite3.OperationalError as exc:
+                if not self._is_sqlite_busy(exc) or attempt == SQLITE_BUSY_RETRY_ATTEMPTS - 1:
+                    raise
+                time.sleep(delay)
+                delay = min(delay * 2, 2.0)
+        return None
 
     def _init_db(self) -> None:
-        with self._connect() as conn:
+        conn = self._connect()
+        try:
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS log_entries (
@@ -280,37 +353,123 @@ class HashChainLogger:
                 CREATE TRIGGER prevent_correlation_update
                 BEFORE UPDATE ON bluebox_correlation_map
                 BEGIN
-                    SELECT RAISE(ABORT, 'bluebox_correlation_map is append-only');
+                    INSERT INTO tamper_attempts (
+                        operation, target_sequence, sqlite_action, details_json
+                    )
+                    VALUES (
+                        'update',
+                        OLD.sequence,
+                        'BEFORE UPDATE ON bluebox_correlation_map',
+                        json_object(
+                            'table', 'bluebox_correlation_map',
+                            'old_source_file', OLD.source_file,
+                            'old_source_type', OLD.source_type,
+                            'old_source_offset', OLD.source_offset
+                        )
+                    );
+                    SELECT RAISE(IGNORE);
                 END;
 
                 CREATE TRIGGER prevent_correlation_delete
                 BEFORE DELETE ON bluebox_correlation_map
                 BEGIN
-                    SELECT RAISE(ABORT, 'bluebox_correlation_map is append-only');
+                    INSERT INTO tamper_attempts (
+                        operation, target_sequence, sqlite_action, details_json
+                    )
+                    VALUES (
+                        'delete',
+                        OLD.sequence,
+                        'BEFORE DELETE ON bluebox_correlation_map',
+                        json_object(
+                            'table', 'bluebox_correlation_map',
+                            'old_source_file', OLD.source_file,
+                            'old_source_type', OLD.source_type,
+                            'old_source_offset', OLD.source_offset
+                        )
+                    );
+                    SELECT RAISE(IGNORE);
                 END;
 
                 CREATE TRIGGER prevent_ai_evidence_update
                 BEFORE UPDATE ON ai_evidence_records
                 BEGIN
-                    SELECT RAISE(ABORT, 'ai_evidence_records is append-only');
+                    INSERT INTO tamper_attempts (
+                        operation, target_sequence, sqlite_action, details_json
+                    )
+                    VALUES (
+                        'update',
+                        OLD.sequence,
+                        'BEFORE UPDATE ON ai_evidence_records',
+                        json_object(
+                            'table', 'ai_evidence_records',
+                            'evidence_id', OLD.evidence_id,
+                            'old_source_file', OLD.source_file,
+                            'old_source_offset', OLD.source_offset
+                        )
+                    );
+                    SELECT RAISE(IGNORE);
                 END;
 
                 CREATE TRIGGER prevent_ai_evidence_delete
                 BEFORE DELETE ON ai_evidence_records
                 BEGIN
-                    SELECT RAISE(ABORT, 'ai_evidence_records is append-only');
+                    INSERT INTO tamper_attempts (
+                        operation, target_sequence, sqlite_action, details_json
+                    )
+                    VALUES (
+                        'delete',
+                        OLD.sequence,
+                        'BEFORE DELETE ON ai_evidence_records',
+                        json_object(
+                            'table', 'ai_evidence_records',
+                            'evidence_id', OLD.evidence_id,
+                            'old_source_file', OLD.source_file,
+                            'old_source_offset', OLD.source_offset
+                        )
+                    );
+                    SELECT RAISE(IGNORE);
                 END;
 
                 CREATE TRIGGER prevent_ai_checkpoint_update
                 BEFORE UPDATE ON ai_evidence_checkpoints
                 BEGIN
-                    SELECT RAISE(ABORT, 'ai_evidence_checkpoints is append-only');
+                    INSERT INTO tamper_attempts (
+                        operation, target_sequence, sqlite_action, details_json
+                    )
+                    VALUES (
+                        'update',
+                        OLD.last_evidence_id,
+                        'BEFORE UPDATE ON ai_evidence_checkpoints',
+                        json_object(
+                            'table', 'ai_evidence_checkpoints',
+                            'checkpoint_id', OLD.checkpoint_id,
+                            'checkpoint_type', OLD.checkpoint_type,
+                            'first_evidence_id', OLD.first_evidence_id,
+                            'last_evidence_id', OLD.last_evidence_id
+                        )
+                    );
+                    SELECT RAISE(IGNORE);
                 END;
 
                 CREATE TRIGGER prevent_ai_checkpoint_delete
                 BEFORE DELETE ON ai_evidence_checkpoints
                 BEGIN
-                    SELECT RAISE(ABORT, 'ai_evidence_checkpoints is append-only');
+                    INSERT INTO tamper_attempts (
+                        operation, target_sequence, sqlite_action, details_json
+                    )
+                    VALUES (
+                        'delete',
+                        OLD.last_evidence_id,
+                        'BEFORE DELETE ON ai_evidence_checkpoints',
+                        json_object(
+                            'table', 'ai_evidence_checkpoints',
+                            'checkpoint_id', OLD.checkpoint_id,
+                            'checkpoint_type', OLD.checkpoint_type,
+                            'first_evidence_id', OLD.first_evidence_id,
+                            'last_evidence_id', OLD.last_evidence_id
+                        )
+                    );
+                    SELECT RAISE(IGNORE);
                 END;
                 """
             )
@@ -331,11 +490,22 @@ class HashChainLogger:
                 FROM log_entries
                 """
             )
+            conn.commit()
+        finally:
+            conn.close()
 
     def append(self, event: RawEvent) -> str:
-        with self._connect() as conn:
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
             entry_hash = self._append_with_connection(conn, event)
-        self.anchor_current_head()
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+        self._anchor_current_head_with_retry()
         return entry_hash
 
     def append_json(
@@ -616,13 +786,68 @@ class HashChainLogger:
 
     def append_many(self, events: Iterable[RawEvent]) -> int:
         count = 0
-        with self._connect() as conn:
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
             for event in events:
                 self._append_with_connection(conn, event)
                 count += 1
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
         if count:
-            self.anchor_current_head()
+            self._anchor_current_head_with_retry()
         return count
+
+    def append_many_with_ai_evidence(
+        self,
+        items: Iterable[
+            tuple[RawEvent, dict[str, Any], str | Path | None, int | None]
+        ],
+    ) -> list[int]:
+        evidence_ids: list[int] = []
+        appended = 0
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for event, verdict, ai_artifact_path, ai_artifact_row_index in items:
+                self._append_with_connection(conn, event)
+                appended += 1
+                mapping = conn.execute(
+                    """
+                    SELECT source_file, source_offset, sequence, entry_hash,
+                           source_type, payload_sha256, created_at
+                    FROM bluebox_correlation_map
+                    WHERE source_file = ? AND source_offset = ?
+                    ORDER BY sequence DESC
+                    LIMIT 1
+                    """,
+                    (str(event.source_file), int(event.source_offset)),
+                ).fetchone()
+                if mapping is None:
+                    raise RuntimeError(
+                        f"no logged row for {event.source_file}:{event.source_offset}"
+                    )
+                evidence = self._insert_ai_evidence_with_connection(
+                    conn,
+                    mapping,
+                    verdict,
+                    ai_artifact_path=ai_artifact_path,
+                    ai_artifact_row_index=ai_artifact_row_index,
+                )
+                evidence_ids.append(int(evidence["evidence_id"]))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+        if appended:
+            self._anchor_current_head_with_retry()
+        return evidence_ids
 
     def ingest_path(self, path: Path) -> int:
         return self.append_many(events_from_path(path))
@@ -726,7 +951,8 @@ class HashChainLogger:
         self, source_file: str | Path, source_offset: int, latest: bool = True
     ) -> dict[str, object] | None:
         order = "DESC" if latest else "ASC"
-        with self._connect() as conn:
+        conn = self._connect()
+        try:
             row = conn.execute(
                 f"""
                 SELECT source_file, source_offset, sequence, entry_hash,
@@ -738,7 +964,54 @@ class HashChainLogger:
                 """,
                 (str(source_file), int(source_offset)),
             ).fetchone()
+        finally:
+            conn.close()
         return dict(row) if row else None
+
+    def _insert_ai_evidence_with_connection(
+        self,
+        conn: sqlite3.Connection,
+        mapping: sqlite3.Row | dict[str, object],
+        verdict: dict[str, Any],
+        ai_artifact_path: str | Path | None = None,
+        ai_artifact_row_index: int | None = None,
+    ) -> dict[str, object]:
+        recorded_at = datetime.now(UTC).isoformat()
+        verdict_json = canonical_json(verdict)
+        ai_result_sha256 = sha256(verdict_json.encode("utf-8")).hexdigest()
+        cursor = conn.execute(
+            """
+            INSERT INTO ai_evidence_records (
+                recorded_at, source_file, source_offset, sequence, entry_hash,
+                ai_artifact_path, ai_artifact_row_index, ai_result_sha256,
+                verdict_json, model_used, anomaly_score, predicted_anomaly,
+                severity
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                recorded_at,
+                str(mapping["source_file"]),
+                int(mapping["source_offset"]),
+                int(mapping["sequence"]),
+                str(mapping["entry_hash"]),
+                str(ai_artifact_path) if ai_artifact_path is not None else None,
+                int(ai_artifact_row_index) if ai_artifact_row_index is not None else None,
+                ai_result_sha256,
+                verdict_json,
+                str(verdict.get("model_used", "")) or None,
+                float(verdict["anomaly_score"]) if "anomaly_score" in verdict else None,
+                int(verdict["predicted_anomaly"]) if "predicted_anomaly" in verdict else None,
+                str(verdict.get("severity", "")) or None,
+            ),
+        )
+        evidence_id = int(cursor.lastrowid)
+        return {
+            "evidence_id": evidence_id,
+            "sequence": mapping["sequence"],
+            "entry_hash": mapping["entry_hash"],
+            "ai_result_sha256": ai_result_sha256,
+        }
 
     def attach_ai_evidence(
         self,
@@ -752,44 +1025,23 @@ class HashChainLogger:
         if mapping is None:
             raise KeyError(f"no logged row for {source_file}:{source_offset}")
 
-        recorded_at = datetime.now(UTC).isoformat()
-        verdict_json = canonical_json(verdict)
-        ai_result_sha256 = sha256(verdict_json.encode("utf-8")).hexdigest()
-        with self._connect() as conn:
-            cursor = conn.execute(
-                """
-                INSERT INTO ai_evidence_records (
-                    recorded_at, source_file, source_offset, sequence, entry_hash,
-                    ai_artifact_path, ai_artifact_row_index, ai_result_sha256,
-                    verdict_json, model_used, anomaly_score, predicted_anomaly,
-                    severity
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    recorded_at,
-                    str(mapping["source_file"]),
-                    int(mapping["source_offset"]),
-                    int(mapping["sequence"]),
-                    str(mapping["entry_hash"]),
-                    str(ai_artifact_path) if ai_artifact_path is not None else None,
-                    int(ai_artifact_row_index) if ai_artifact_row_index is not None else None,
-                    ai_result_sha256,
-                    verdict_json,
-                    str(verdict.get("model_used", "")) or None,
-                    float(verdict["anomaly_score"]) if "anomaly_score" in verdict else None,
-                    int(verdict["predicted_anomaly"]) if "predicted_anomaly" in verdict else None,
-                    str(verdict.get("severity", "")) or None,
-                ),
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            evidence = self._insert_ai_evidence_with_connection(
+                conn,
+                mapping,
+                verdict,
+                ai_artifact_path=ai_artifact_path,
+                ai_artifact_row_index=ai_artifact_row_index,
             )
-            evidence_id = int(cursor.lastrowid)
-
-        return {
-            "evidence_id": evidence_id,
-            "sequence": mapping["sequence"],
-            "entry_hash": mapping["entry_hash"],
-            "ai_result_sha256": ai_result_sha256,
-        }
+            conn.commit()
+            return evidence
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def attach_ai_evidence_from_csv(
         self,
@@ -797,7 +1049,8 @@ class HashChainLogger:
         scored_csv: str | Path,
         include_shap: bool = False,
     ) -> dict[str, object]:
-        source_path = str(Path(source_csv))
+        source_candidates = source_file_candidates(source_csv)
+        source_path = source_candidates[0]
         scored_path = Path(scored_csv)
         attached = 0
         missing = 0
@@ -825,6 +1078,23 @@ class HashChainLogger:
                 }
                 if not verdict:
                     continue
+                if row.get("timestamp"):
+                    verdict["occurred_at"] = row["timestamp"]
+                for key in (
+                    "data_format",
+                    "domain",
+                    "protocol",
+                    "src",
+                    "dst",
+                    "src_ip",
+                    "dst_ip",
+                    "label_octal",
+                    "anomaly_type",
+                    "port",
+                    "dst_port",
+                ):
+                    if row.get(key):
+                        verdict[key] = row[key]
                 predicted = int(verdict.get("predicted_anomaly", 0))
                 if include_shap and predicted and explain_event and event_from_record:
                     explanation = explain_event(event_from_record(row))
@@ -834,18 +1104,24 @@ class HashChainLogger:
                             "explanation_text": explanation["explanation_text"],
                         }
                     )
-                try:
-                    evidence = self.attach_ai_evidence(
-                        source_path,
-                        row_index,
-                        verdict,
-                        ai_artifact_path=scored_path,
-                        ai_artifact_row_index=row_index,
-                    )
-                    evidence_ids.append(int(evidence["evidence_id"]))
-                    attached += 1
-                except KeyError:
+                evidence = None
+                for candidate in source_candidates:
+                    try:
+                        evidence = self.attach_ai_evidence(
+                            candidate,
+                            row_index,
+                            verdict,
+                            ai_artifact_path=scored_path,
+                            ai_artifact_row_index=row_index,
+                        )
+                        break
+                    except KeyError:
+                        continue
+                if evidence is None:
                     missing += 1
+                    continue
+                evidence_ids.append(int(evidence["evidence_id"]))
+                attached += 1
         checkpoint = self.create_ai_evidence_checkpoint(evidence_ids) if evidence_ids else None
         return {
             "source_file": source_path,
@@ -870,7 +1146,6 @@ class HashChainLogger:
             rooted_path = Path(__file__).resolve().parents[1] / path
             path = rooted_path if rooted_path.exists() else path
         if not path.exists():
-            self._explanation_cache[cache_key] = None
             return None
         try:
             from backend.explainability.shap_explainer import explain_event
@@ -883,9 +1158,7 @@ class HashChainLogger:
                         self._explanation_cache[cache_key] = explanation
                         return explanation
         except Exception:
-            self._explanation_cache[cache_key] = None
             return None
-        self._explanation_cache[cache_key] = None
         return None
 
     def _load_scored_artifact_row(
@@ -915,15 +1188,33 @@ class HashChainLogger:
         record: dict[str, str],
         fallback_source: str,
     ) -> tuple[str, str, str]:
-        data_format = record.get("data_format") or "LOG"
+        data_format = str(record.get("data_format") or "LOG").upper()
+        source = (
+            record.get("src")
+            or record.get("src_ip")
+            or record.get("source_ip")
+            or record.get("source_component")
+        )
+        target = (
+            record.get("dst")
+            or record.get("dst_ip")
+            or record.get("destination_ip")
+            or record.get("target_component")
+        )
+        service = str(
+            record.get("protocol")
+            or record.get("service")
+            or record.get("port")
+            or record.get("dst_port")
+            or data_format
+        )
         if data_format == "PCAP":
-            source = record.get("src") or record.get("src_ip") or "unknown source"
-            target = record.get("dst") or record.get("dst_ip") or "unknown target"
-            service = record.get("protocol") or record.get("port") or "network traffic"
-            return source, target, str(service)
+            return source or "unknown source", target or "unknown target", service
         if data_format == "ARINC429":
             label = record.get("label_octal") or record.get("src") or "unknown label"
             return "ARINC 429 bus", f"label {label}", "avionics word"
+        if source or target:
+            return source or Path(fallback_source).stem or "unknown source", target or "unknown target", service
         return Path(fallback_source).stem or "log source", "BlueBox evidence", data_format
 
     def _event_summary(
@@ -1243,7 +1534,9 @@ class HashChainLogger:
             raise ValueError("evidence_ids must not be empty")
         ordered_ids = sorted(set(int(value) for value in evidence_ids))
         placeholders = ",".join("?" for _ in ordered_ids)
-        with self._connect() as conn:
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
             rows = conn.execute(
                 f"""
                 SELECT evidence_id, recorded_at, source_file, source_offset,
@@ -1304,6 +1597,12 @@ class HashChainLogger:
                     signature,
                 ),
             )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
         with self.ai_evidence_ledger_path.open("a", encoding="utf-8") as handle:
             handle.write(canonical_json(checkpoint_record) + "\n")
         return {
@@ -1647,6 +1946,39 @@ class HashChainLogger:
             "ledger_status": self.verify_recovery_ledger(),
         }
 
+    def ensure_recovery_ledger_initialized(self) -> dict[str, object]:
+        conn = self._connect()
+        try:
+            row_count = int(conn.execute("SELECT COUNT(*) FROM log_entries").fetchone()[0])
+        finally:
+            conn.close()
+
+        if row_count == 0:
+            return {
+                "initialized": False,
+                "skipped": True,
+                "reason": "no SQLite evidence entries exist yet",
+            }
+
+        if self.recovery_ledger_path.exists() and self.recovery_ledger_path.stat().st_size > 0:
+            return {
+                "initialized": False,
+                "skipped": True,
+                "reason": "recovery ledger already exists",
+                "ledger_status": self.verify_recovery_ledger(),
+            }
+
+        verification = self.verify()
+        if not verification["ok"]:
+            return {
+                "initialized": False,
+                "skipped": True,
+                "reason": "current SQLite store is not trusted",
+                "verification": verification,
+            }
+
+        return self.initialize_recovery_ledger()
+
     def load_verified_recovery_records(self, public_key_value: Any) -> list[dict[str, object]]:
         expected_previous = GENESIS_HASH
         records: list[dict[str, object]] = []
@@ -1788,7 +2120,8 @@ class HashChainLogger:
         }
 
     def current_head(self) -> ChainHead:
-        with self._connect() as conn:
+        conn = self._connect()
+        try:
             row = conn.execute(
                 """
                 SELECT
@@ -1802,6 +2135,8 @@ class HashChainLogger:
                 """,
                 (GENESIS_HASH,),
             ).fetchone()
+        finally:
+            conn.close()
         return {
             "sequence": int(row["sequence"]),
             "entry_count": int(row["entry_count"]),
@@ -1843,10 +2178,403 @@ class HashChainLogger:
             )
         return entries
 
+    def sequence_entries(self, limit: int = 5000) -> list[dict[str, object]]:
+        limit = max(1, min(limit, 5000))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT sequence, created_at, source_file, source_type,
+                       source_offset, metadata_json
+                FROM log_entries
+                ORDER BY sequence DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+
+        entries: list[dict[str, object]] = []
+        for row in rows:
+            try:
+                metadata = json.loads(row["metadata_json"])
+            except (TypeError, json.JSONDecodeError):
+                metadata = {}
+
+            source_type = str(row["source_type"] or "LOG")
+            ingest_mode = str(metadata.get("ingest_mode") or "")
+            offset_label = "Offset"
+            if ingest_mode == "csv_row":
+                offset_label = "Row"
+            elif ingest_mode == "binary_chunk":
+                offset_label = "Chunk"
+            elif source_type == "SECURITY_EVENT":
+                offset_label = "Event"
+
+            entries.append(
+                {
+                    "sequence": int(row["sequence"]),
+                    "created_at": str(row["created_at"]),
+                    "source_file": str(row["source_file"]),
+                    "source_type": source_type,
+                    "source_offset": int(row["source_offset"]),
+                    "ingest_mode": ingest_mode,
+                    "offset_label": offset_label,
+                    "storage": metadata.get("storage"),
+                }
+            )
+        return entries
+
+    def evidence_source_summary(self, limit: int = 5000) -> list[dict[str, object]]:
+        limit = max(1, min(limit, 5000))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT source_file, source_type,
+                       COUNT(*) AS records,
+                       MIN(created_at) AS first_seen,
+                       MAX(created_at) AS last_seen,
+                       MIN(sequence) AS first_sequence,
+                       MAX(sequence) AS last_sequence
+                FROM log_entries
+                GROUP BY source_file, source_type
+                ORDER BY last_seen DESC, records DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def backfill_generated_artifacts(self) -> dict[str, object]:
+        with self._connect() as conn:
+            source_rows = conn.execute(
+                """
+                SELECT DISTINCT source_file
+                FROM log_entries
+                """
+            ).fetchall()
+
+        existing_sources = {
+            normalized_source_path(row["source_file"])
+            for row in source_rows
+            if row["source_file"]
+        }
+        candidates: list[Path] = []
+
+        for row in source_rows:
+            source_file = str(row["source_file"] or "")
+            source_path = resolve_project_path(source_file)
+            if source_path.suffix.lower() != ".csv":
+                continue
+            source_name = source_path.name.lower()
+            if source_name.endswith("_scores.csv") or source_name.endswith("_labels.csv"):
+                continue
+            if not source_path.parent.exists():
+                continue
+
+            sibling_artifacts = [
+                *sorted(source_path.parent.glob("*.pcap")),
+                *sorted(source_path.parent.glob("*_labels.csv")),
+            ]
+            for artifact in sibling_artifacts:
+                artifact_key = normalized_source_path(artifact)
+                if artifact_key in existing_sources:
+                    continue
+                existing_sources.add(artifact_key)
+                candidates.append(artifact)
+
+        ingested: list[dict[str, object]] = []
+        skipped_empty: list[str] = []
+        for artifact in candidates:
+            count = self.ingest_path(artifact)
+            if count:
+                ingested.append(
+                    {
+                        "source_file": str(artifact),
+                        "source_type": "PCAP" if artifact.suffix.lower() == ".pcap" else "CSV",
+                        "entries": count,
+                    }
+                )
+            else:
+                skipped_empty.append(str(artifact))
+
+        return {
+            "ingested_files": len(ingested),
+            "ingested_entries": sum(int(item["entries"]) for item in ingested),
+            "sources": ingested,
+            "skipped_empty": skipped_empty,
+        }
+
+    def recent_security_events(self, limit: int = 8) -> list[dict[str, object]]:
+        limit = max(1, min(limit, 50))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT sequence, created_at, source_file, source_type,
+                       source_offset, entry_hash, metadata_json, payload
+                FROM log_entries
+                WHERE source_type = 'SECURITY_EVENT'
+                ORDER BY sequence DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+
+        events: list[dict[str, object]] = []
+        for row in rows:
+            metadata = json.loads(row["metadata_json"])
+            payload: dict[str, object] = {}
+            try:
+                encryption = metadata.get("encryption")
+                if isinstance(encryption, dict):
+                    plaintext = decrypt_payload(
+                        row["payload"],
+                        build_associated_data(
+                            row["source_file"],
+                            row["source_type"],
+                            row["source_offset"],
+                            base_event_metadata(metadata),
+                        ),
+                        self.data_key,
+                        encryption,
+                    )
+                    payload = json.loads(decode_payload_for_display(plaintext))
+            except Exception:
+                payload = {}
+
+            events.append(
+                {
+                    "sequence": row["sequence"],
+                    "created_at": row["created_at"],
+                    "source_file": row["source_file"],
+                    "source_offset": row["source_offset"],
+                    "event": payload.get("event") or metadata.get("event_name") or "security_event",
+                    "severity": payload.get("severity") or metadata.get("severity") or "INFO",
+                    "details": payload.get("details", {}),
+                }
+            )
+        return events
+
+    def append_only_activity(self, limit: int = 5000) -> list[dict[str, object]]:
+        limit = max(25, min(limit, 5000))
+
+        def metadata_from_row(row: sqlite3.Row) -> dict[str, object]:
+            try:
+                return json.loads(row["metadata_json"])
+            except (TypeError, json.JSONDecodeError):
+                return {}
+
+        def details_from_row(row: sqlite3.Row) -> dict[str, object]:
+            try:
+                return json.loads(row["details_json"])
+            except (TypeError, json.JSONDecodeError):
+                return {}
+
+        def is_critical_security_event(
+            event_name: object,
+            severity: object,
+            operation: object = "",
+        ) -> bool:
+            event_text = str(event_name or "").lower()
+            severity_text = str(severity or "").upper()
+            operation_text = str(operation or "").lower()
+            if severity_text in {"CRITICAL", "HIGH"}:
+                return True
+            return any(
+                token in f"{event_text} {operation_text}"
+                for token in ("tamper", "corrupt", "delete", "update", "failed", "failure")
+            )
+
+        with self._connect() as conn:
+            log_rows = conn.execute(
+                """
+                SELECT sequence, created_at, source_file, source_type,
+                       source_offset, metadata_json
+                FROM log_entries
+                ORDER BY sequence DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            ai_rows = conn.execute(
+                """
+                SELECT evidence_id, recorded_at, source_file, source_offset,
+                       sequence, predicted_anomaly, severity, model_used
+                FROM ai_evidence_records
+                ORDER BY evidence_id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            checkpoint_rows = conn.execute(
+                """
+                SELECT checkpoint_id, created_at, checkpoint_type, batch_size,
+                       first_evidence_id, last_evidence_id
+                FROM ai_evidence_checkpoints
+                ORDER BY checkpoint_id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            attempt_rows = conn.execute(
+                """
+                SELECT attempt_id, detected_at, operation, target_sequence,
+                       sqlite_action, details_json, chain_entry_hash
+                FROM tamper_attempts
+                ORDER BY attempt_id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+
+        activity: list[dict[str, object]] = []
+        for row in log_rows:
+            metadata = metadata_from_row(row)
+            source_type = str(row["source_type"] or "LOG")
+            is_security_event = source_type == "SECURITY_EVENT"
+            severity = metadata.get("severity") or ("INFO" if is_security_event else "NORMAL")
+            event_name = metadata.get("event_name") or "security_event"
+            classification = (
+                "Critical"
+                if is_security_event and is_critical_security_event(event_name, severity)
+                else "Normal"
+            )
+            activity.append(
+                {
+                    "kind": "security_event" if is_security_event else "raw_log",
+                    "kind_label": "Log",
+                    "recorded_at": row["created_at"],
+                    "sequence": row["sequence"],
+                    "record_id": f"seq-{row['sequence']}",
+                    "record_label": f"Log #{row['sequence']}",
+                    "activity": "Security event appended" if is_security_event else "Raw log appended",
+                    "source_file": row["source_file"],
+                    "source_type": source_type,
+                    "source_offset": row["source_offset"],
+                    "classification": classification,
+                    "context": "Encrypted, hashed, RSA-signed SQLite append",
+                    "batch_key": f"log:{source_type}:{row['source_file']}",
+                    "ingest_mode": metadata.get("ingest_mode"),
+                    "storage": metadata.get("storage"),
+                }
+            )
+
+        for row in ai_rows:
+            severity = str(row["severity"] or "normal")
+            flagged = int(row["predicted_anomaly"] or 0) == 1
+            classification = (
+                "Critical"
+                if flagged or severity.upper() in {"CRITICAL", "HIGH"}
+                else "Normal"
+            )
+            activity.append(
+                {
+                    "kind": "ai_evidence",
+                    "kind_label": "AI",
+                    "recorded_at": row["recorded_at"],
+                    "sequence": row["sequence"],
+                    "record_id": f"ai-{row['evidence_id']}",
+                    "record_label": f"AI #{row['evidence_id']}",
+                    "activity": "AI evidence stored",
+                    "source_file": row["source_file"],
+                    "source_type": "AI_EVIDENCE",
+                    "source_offset": row["source_offset"],
+                    "classification": classification,
+                    "context": f"{'Flagged anomaly' if flagged else 'Normal verdict'} / {severity.title()}",
+                    "batch_key": f"ai:{classification}:{row['source_file']}",
+                    "model_used": row["model_used"],
+                    "evidence_id": row["evidence_id"],
+                }
+            )
+
+        for row in checkpoint_rows:
+            activity.append(
+                {
+                    "kind": "ai_checkpoint",
+                    "kind_label": "AI",
+                    "recorded_at": row["created_at"],
+                    "sequence": row["last_evidence_id"],
+                    "record_id": f"ai-checkpoint-{row['checkpoint_id']}",
+                    "record_label": f"AI Checkpoint #{row['checkpoint_id']}",
+                    "activity": "AI checkpoint stored",
+                    "source_file": "AI evidence ledger",
+                    "source_type": "AI_CHECKPOINT",
+                    "source_offset": row["first_evidence_id"],
+                    "classification": "Normal",
+                    "context": (
+                        f"{row['batch_size']} evidence records, "
+                        f"AI #{row['first_evidence_id']} to #{row['last_evidence_id']}"
+                    ),
+                    "batch_key": f"ai_checkpoint:{row['checkpoint_type']}",
+                    "checkpoint_id": row["checkpoint_id"],
+                }
+            )
+
+        for row in attempt_rows:
+            details = details_from_row(row)
+            operation = str(row["operation"] or "mutation").title()
+            table_name = str(details.get("table") or row["sqlite_action"] or "protected table")
+            source_file = str(details.get("old_source_file") or table_name)
+            attacker_ip = str(details.get("attacker_ip") or details.get("actor_ip") or DEFAULT_ATTACKER_IP)
+            activity.append(
+                {
+                    "kind": "mutation_attempt",
+                    "kind_label": "Attempt",
+                    "recorded_at": row["detected_at"],
+                    "sequence": row["target_sequence"],
+                    "record_id": f"attempt-{row['attempt_id']}",
+                    "record_label": f"Attempt #{row['attempt_id']}",
+                    "activity": f"{operation} attempt blocked",
+                    "source_file": source_file,
+                    "source_type": "MUTATION_ATTEMPT",
+                    "source_offset": details.get("old_source_offset"),
+                    "source_component": attacker_ip,
+                    "attacker_ip": attacker_ip,
+                    "target_component": f"SEQ #{row['target_sequence']}",
+                    "classification": "Critical",
+                    "context": f"Protected append-only table: {table_name}",
+                    "batch_key": f"attempt:{row['operation']}:{table_name}",
+                    "attempt_id": row["attempt_id"],
+                    "target_sequence": row["target_sequence"],
+                    "synced_to_chain": bool(row["chain_entry_hash"]),
+                }
+            )
+
+        return sorted(
+            activity,
+            key=lambda item: str(item.get("recorded_at") or ""),
+            reverse=True,
+        )
+
+    def anchor_history(self, limit: int = 12) -> list[dict[str, object]]:
+        limit = max(1, min(limit, 100))
+        if not self.anchor_log_path.exists():
+            return []
+
+        anchors: list[dict[str, object]] = []
+        with self.anchor_log_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    anchor = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                anchors.append(
+                    {
+                        "created_at": anchor.get("created_at"),
+                        "sequence": anchor.get("sequence"),
+                        "entry_count": anchor.get("entry_count"),
+                        "anchor_hash": anchor.get("anchor_hash"),
+                        "previous_anchor_hash": anchor.get("previous_anchor_hash"),
+                    }
+                )
+        return anchors[-limit:]
+
     def ai_evidence_summary(self, limit: int = 80) -> dict[str, object]:
         limit = max(1, min(limit, 200))
         trace_limit = max(40, min(limit * 2, 200))
-        ranked_limit = max(20, min(limit, 80))
+        flagged_trace_limit = 2000
+        ranked_limit = max(20, min(limit, 200))
         with self._connect() as conn:
             total_entries = int(
                 conn.execute("SELECT COUNT(*) FROM log_entries").fetchone()[0]
@@ -1892,6 +2620,19 @@ class HashChainLogger:
                 LIMIT ?
                 """,
                 (trace_limit,),
+            ).fetchall()
+            flagged_trace_rows = conn.execute(
+                """
+                SELECT evidence_id, recorded_at, source_file, source_offset,
+                       sequence, ai_artifact_path, ai_artifact_row_index,
+                       verdict_json, model_used, anomaly_score,
+                       predicted_anomaly, severity
+                FROM ai_evidence_records
+                WHERE predicted_anomaly = 1
+                ORDER BY evidence_id ASC
+                LIMIT ?
+                """,
+                (flagged_trace_limit,),
             ).fetchall()
             ranked_rows = conn.execute(
                 """
@@ -1953,6 +2694,7 @@ class HashChainLogger:
             return {
                 "evidence_id": row["evidence_id"],
                 "recorded_at": row["recorded_at"],
+                "occurred_at": verdict.get("occurred_at") or row["recorded_at"],
                 "source_file": row["source_file"],
                 "source_offset": row["source_offset"],
                 "sequence": row["sequence"],
@@ -1963,10 +2705,34 @@ class HashChainLogger:
                 "severity": row["severity"],
                 "top_features": top_features,
                 "explanation": explanation_text,
+                "data_format": verdict.get("data_format"),
+                "domain": verdict.get("domain"),
+                "protocol": verdict.get("protocol"),
+                "src": verdict.get("src") or verdict.get("src_ip"),
+                "dst": verdict.get("dst") or verdict.get("dst_ip"),
+                "label_octal": verdict.get("label_octal"),
+                "anomaly_type": verdict.get("anomaly_type"),
+                "port": verdict.get("port") or verdict.get("dst_port"),
             }
 
         records = [display_record(row) for row in rows]
-        score_trace = [display_record(row) for row in reversed(trace_rows)]
+
+        trace_by_evidence_id = {
+            int(row["evidence_id"]): display_record(row)
+            for row in reversed(trace_rows)
+        }
+        for row in flagged_trace_rows:
+            trace_by_evidence_id[int(row["evidence_id"])] = display_record(
+                row,
+                include_explanation=True,
+            )
+        score_trace = sorted(
+            trace_by_evidence_id.values(),
+            key=lambda item: (
+                str(item.get("occurred_at") or item.get("recorded_at") or ""),
+                int(item.get("evidence_id") or 0),
+            ),
+        )
         ranked_anomalies = [
             display_record(row, include_explanation=True) for row in ranked_rows
         ]
@@ -1998,6 +2764,11 @@ class HashChainLogger:
                     "event": payload.get("event", "security_event"),
                     "severity": payload.get("severity", "HIGH"),
                     "details": payload.get("details", {}),
+                    "attacker_ip": (
+                        payload.get("attacker_ip")
+                        or (payload.get("details", {}) if isinstance(payload.get("details"), dict) else {}).get("attacker_ip")
+                        or DEFAULT_ATTACKER_IP
+                    ),
                 }
             )
 
@@ -2018,8 +2789,8 @@ class HashChainLogger:
             "security_events": security_events,
         }
 
-    def forensic_replay(self, limit: int = 12) -> dict[str, object]:
-        limit = max(3, min(limit, 30))
+    def forensic_replay(self, limit: int = 5000) -> dict[str, object]:
+        limit = max(3, min(limit, 5000))
         with self._connect() as conn:
             rows = conn.execute(
                 """
@@ -2030,8 +2801,7 @@ class HashChainLogger:
                        air.ai_artifact_path, air.ai_artifact_row_index
                 FROM log_entries le
                 JOIN ai_evidence_records air ON air.sequence = le.sequence
-                WHERE air.predicted_anomaly = 1
-                ORDER BY air.anomaly_score ASC, le.sequence ASC
+                ORDER BY le.sequence ASC, air.evidence_id ASC
                 LIMIT ?
                 """,
                 (limit,),
@@ -2059,7 +2829,7 @@ class HashChainLogger:
                 row["source_file"],
             )
             occurred_at = artifact_row.get("timestamp") or row["created_at"]
-            severity = row["severity"] or "ANOMALY"
+            severity = row["severity"] or ("HIGH" if row["predicted_anomaly"] else "NORMAL")
             evidence_stream.append(
                 {
                     "sequence": row["sequence"],
@@ -2082,6 +2852,10 @@ class HashChainLogger:
             )
 
         timeline = sorted(evidence_stream, key=lambda item: str(item.get("occurred_at") or ""))
+        anomalous_timeline = [
+            item for item in timeline
+            if int(item.get("predicted_anomaly") or 0) == 1
+        ]
         composition: dict[str, int] = {}
         for item in evidence_stream:
             key = str(item.get("service") or item.get("source_type") or "unknown")
@@ -2090,9 +2864,10 @@ class HashChainLogger:
         return {
             "timeline": timeline,
             "evidence_stream": timeline,
-            "attack_graph": self._build_attack_graph(timeline[:8]),
+            "attack_graph": self._build_attack_graph(anomalous_timeline[:8]),
             "composition": composition,
             "count": len(timeline),
+            "anomaly_count": len(anomalous_timeline),
         }
 
     def forensic_report(self) -> dict[str, object]:
@@ -2225,6 +3000,7 @@ class HashChainLogger:
         }
 
     def integrity_panel(self) -> dict[str, object]:
+        artifact_backfill = self.backfill_generated_artifacts()
         tamper_attempt_sync = self.sync_tamper_attempts()
         verification = self.verify()
         ai_ledger = self.verify_ai_evidence_ledger()
@@ -2266,8 +3042,15 @@ class HashChainLogger:
             "payload_storage": "AES-256-GCM",
             "first_seen": row[1],
             "last_seen": row[2],
+            "verified_at": datetime.now(UTC).isoformat() if verification["ok"] else None,
             "first_failure": verification["first_failure"],
             "tamper_attempt_sync": tamper_attempt_sync,
+            "artifact_backfill": artifact_backfill,
+            "source_summary": self.evidence_source_summary(),
+            "sequence_entries": self.sequence_entries(),
+            "recent_security_events": self.recent_security_events(),
+            "append_only_activity": self.append_only_activity(),
+            "anchor_history": self.anchor_history(),
         }
 
     def _latest_hash(self, conn: sqlite3.Connection) -> str:
@@ -2358,6 +3141,20 @@ def build_entry_material(
         "previous_hash": previous_hash,
         "rsa_key_id": rsa_key_id,
     }
+
+
+def resolve_project_path(value: object) -> Path:
+    path = Path(str(value or ""))
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    return path
+
+
+def normalized_source_path(value: object) -> str:
+    try:
+        return str(resolve_project_path(value).resolve()).casefold()
+    except OSError:
+        return str(resolve_project_path(value)).casefold()
 
 
 def compute_legacy_entry_hash(previous_hash: str, payload_hash: str, metadata_json: str) -> str:
