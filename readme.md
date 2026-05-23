@@ -1,10 +1,8 @@
 <p align="center">
-  <img src="UI_layer/bluebox_react/images/bb_banner.png" alt="BlueBox banner" width="60%">
+  <img src="UI_layer/bluebox_react/images/bb_banner.png" alt="BlueBox banner" width="100%">
 </p>
 
-<!-- <p align="center">
-  <strong>AI-assisted, tamper-evident flight recorder demo for connected aircraft systems.</strong>
-</p> -->
+<br>
 
 <p align="center">
   <a href="#quick-start-on-windows"><img alt="Windows setup" src="https://img.shields.io/badge/windows-supported-0078D4"></a>
@@ -37,11 +35,13 @@
   <a href="SECURITY.md">Security</a>
 </p>
 
+<br>
+
 ## BlueBox
 
 BlueBox is an AI-assisted, tamper-evident flight recorder demo for connected aircraft systems. It generates aircraft-style traffic, detects suspicious behavior, stores evidence in a signed hash-chain logger, and gives analysts a dashboard for anomaly triage, forensic replay, provenance graph review, and Part-IS response guidance.
 
-This repository is designed for Airbus-focused local demos and controlled internal evaluation. It is not an open-source distribution and should not be reused, copied, or shared outside the authorised project context. See [LICENSE.md](LICENSE.md) and [SECURITY.md](SECURITY.md).
+This repository is designed for Airbus-focused local demos and controlled internal evaluation. It is not an open-source distribution and should not be reused, copied, or shared outside the authorised project context.
 
 ## Features
 
