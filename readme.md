@@ -52,17 +52,29 @@ BlueBox demonstrates three main dashboard capabilities:
    - Highlights suspicious packet size, frequency, protocol, port, cross-domain, replay, command, and ARINC field behavior.
    - Shows AI explanations such as top SHAP features and anomaly reasons.
 
+<br>
+<img src="./assets/anomaly_detection.png" width="800">
+<br>
+
 2. **Trusted Logger and Recovery**
    - Stores every raw evidence row in encrypted SQLite.
    - Links entries with hashes, RSA signatures, anchors, and recovery ledgers.
    - Blocks normal dashboard reads when trust verification fails.
    - Demonstrates blocked tamper attempts and recovery from forced corruption.
+  
+<br>
+<img src="./assets/logger_dashboard.png" width="800">
+<br>
 
 3. **Forensic Replay, Provenance Graph, and BB Chat**
    - Replays evidence in sequence order.
    - Shows source, target, severity, graph links, chain events, and DB mutation attempts.
    - Lets analysts upload regulation documents for BB Chat RAG.
    - Answers sequence-specific and incident-response questions with EU Part-IS aligned steps.
+
+<br>
+<img src="./assets/provenance_graph.gif" width="800">
+<br>
 
 ## Toolchain
 
