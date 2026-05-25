@@ -11,7 +11,7 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import RLock
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -23,12 +23,27 @@ from logger_layer.hash_chain_logger import (
     DEFAULT_DB,
     DEFAULT_RECOVERY_LEDGER,
     HashChainLogger,
+    RawEvent,
+    canonical_json,
 )
-from logger_layer.provenance_graph_builder import ProvenanceGraphBuilder
+from logger_layer.enhanced_provenance_builder import EnhancedProvenanceGraphBuilder
+from UI_layer.BB_bot.bb_bot_service import BBBotService, extract_sequence_numbers
 
 
 STATIC_DIR = PROJECT_ROOT / "UI_layer" / "bluebox_react" / "dist"
 DEMO_OUTPUT_DIR = RUNTIME_DEMO_OUTPUT_DIR / "logger_demo"
+
+
+def normalize_local_source_file(value: object, fallback: str = "live://traffic_simulator") -> str:
+    text = str(value or "").strip()
+    if not text:
+        return fallback
+    if "://" in text:
+        return text
+    source_path = Path(text).expanduser()
+    if not source_path.is_absolute():
+        source_path = PROJECT_ROOT / source_path
+    return str(source_path.resolve())
 
 
 class LoggerDemoHandler(SimpleHTTPRequestHandler):
@@ -43,6 +58,89 @@ class LoggerDemoHandler(SimpleHTTPRequestHandler):
 
     def status_payload(self) -> dict[str, object]:
         return self.server.cached_status_payload()  # type: ignore[attr-defined]
+
+    @property
+    def bb_bot(self) -> BBBotService:
+        return self.server.bb_bot  # type: ignore[attr-defined]
+
+    def provenance_query(self, query: str) -> dict[str, object]:
+        query_params = parse_qs(query)
+        severity_threshold = 0.5
+        severity_levels: list[str] = []
+        domains: list[str] = []
+        event_types: list[str] = []
+        time_window_ms: int | None = None
+        max_events = 10
+
+        if "severity" in query_params:
+            try:
+                severity_threshold = float(query_params["severity"][0])
+            except (ValueError, IndexError):
+                pass
+
+        if "severity_levels" in query_params:
+            severity_levels = [item for item in query_params["severity_levels"][0].split(",") if item]
+
+        if "domains" in query_params:
+            domains = [item for item in query_params["domains"][0].split(",") if item]
+
+        if "event_types" in query_params:
+            event_types = [item for item in query_params["event_types"][0].split(",") if item]
+
+        if "time_window_ms" in query_params:
+            try:
+                twms = float(query_params["time_window_ms"][0])
+                time_window_ms = None if twms == float("inf") else int(twms)
+            except (ValueError, IndexError):
+                pass
+
+        if "limit" in query_params:
+            try:
+                max_events = max(1, min(int(query_params["limit"][0]), 30))
+            except (ValueError, IndexError):
+                pass
+
+        return {
+            "severity_threshold": severity_threshold,
+            "severity_levels": severity_levels,
+            "domains": domains,
+            "event_types": event_types,
+            "time_window_ms": time_window_ms,
+            "max_events": max_events,
+        }
+
+    def provenance_events(self) -> list[dict[str, object]]:
+        ai = self.logger.ai_evidence_summary(limit=80)
+        events = list(ai.get("ranked_anomalies", []))
+        for event in ai.get("security_events", []):
+            if isinstance(event, dict):
+                events.append({**event, "event_type": "security_event"})
+        try:
+            activity = self.status_payload().get("append_only_activity", [])
+        except Exception:
+            activity = []
+        seen_attempts = {
+            str(event.get("details", {}).get("attempt_id") or event.get("attempt_id") or "")
+            for event in events
+            if isinstance(event, dict)
+        }
+        for event in activity if isinstance(activity, list) else []:
+            if not isinstance(event, dict) or event.get("kind") != "mutation_attempt":
+                continue
+            attempt_id = str(event.get("attempt_id") or "")
+            if attempt_id and attempt_id in seen_attempts:
+                continue
+            events.append({**event, "event_type": "mutation_attempt"})
+            if attempt_id:
+                seen_attempts.add(attempt_id)
+        return events
+
+    def provenance_graph_payload(self, query: str) -> dict[str, object]:
+        graph_builder = EnhancedProvenanceGraphBuilder()
+        return graph_builder.build_from_forensic_timeline(
+            self.provenance_events(),
+            **self.provenance_query(query),
+        )
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -59,32 +157,45 @@ class LoggerDemoHandler(SimpleHTTPRequestHandler):
                 self.write_json(self.logger.forensic_replay())
                 return
             if parsed.path == "/api/provenance-graph":
-                # Note: Not requiring trusted readiness for forensic analysis
-                # as this is read-only historical analysis
                 try:
-                    # Get forensic replay data
-                    replay_data = self.logger.forensic_replay(limit=50)
-                    timeline = replay_data.get("timeline", [])
-                    
-                    # Parse severity threshold from query params
-                    severity_threshold = 0.5
-                    query_params = parse_qs(parsed.query)
-                    if "severity" in query_params:
-                        try:
-                            severity_threshold = float(query_params["severity"][0])
-                        except (ValueError, IndexError):
-                            pass
-                    
-                    # Build provenance graph using NetworkX
-                    graph_builder = ProvenanceGraphBuilder()
-                    graph_data = graph_builder.build_from_forensic_timeline(
-                        timeline,
-                        severity_threshold=severity_threshold
-                    )
-                    
-                    self.write_json(graph_data)
+                    self.write_json(self.provenance_graph_payload(parsed.query))
                 except Exception as e:
-                    self.write_json({"error": str(e), "nodes": {}, "edges": [], "positions": {}}, status=400)
+                    self.write_json({"error": str(e), "nodes": [], "links": [], "positions": {}}, status=400)
+                return
+            
+            if parsed.path == "/api/provenance-graph/export/png":
+                # Export provenance graph as PNG
+                try:
+                    graph_builder = EnhancedProvenanceGraphBuilder()
+                    graph_builder.build_from_forensic_timeline(
+                        self.provenance_events(),
+                        **self.provenance_query(parsed.query),
+                    )
+                    png_buffer = graph_builder.export_png()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/png")
+                    self.send_header("Content-Length", str(len(png_buffer.getvalue())))
+                    self.end_headers()
+                    self.wfile.write(png_buffer.getvalue())
+                except Exception as e:
+                    self.write_json({"error": str(e)}, status=500)
+                return
+            
+            if parsed.path == "/api/provenance-graph/export/summary":
+                # Export provenance graph as text summary
+                try:
+                    graph_builder = EnhancedProvenanceGraphBuilder()
+                    graph_builder.build_from_forensic_timeline(
+                        self.provenance_events(),
+                        **self.provenance_query(parsed.query),
+                    )
+                    summary = graph_builder.export_summary()
+                    self.write_json({"summary": summary})
+                except Exception as e:
+                    self.write_json({"error": str(e)}, status=500)
+                return
+            if parsed.path == "/api/bb-bot/documents":
+                self.write_json({"documents": self.bb_bot.list_documents()})
                 return
             if parsed.path == "/api/report":
                 self.require_trusted_readiness()
@@ -126,6 +237,14 @@ class LoggerDemoHandler(SimpleHTTPRequestHandler):
                 result = self.handle_ingest(payload)
                 self.server.invalidate_status_cache()  # type: ignore[attr-defined]
                 self.write_json(result)
+            elif parsed.path == "/api/live-traffic":
+                result = self.handle_live_traffic(payload)
+                self.server.invalidate_status_cache()  # type: ignore[attr-defined]
+                self.write_json(result)
+            elif parsed.path == "/api/attach-ai":
+                result = self.handle_attach_ai(payload)
+                self.server.invalidate_status_cache()  # type: ignore[attr-defined]
+                self.write_json(result)
             elif parsed.path == "/api/demo":
                 result = self.handle_demo(payload)
                 self.server.invalidate_status_cache()  # type: ignore[attr-defined]
@@ -151,8 +270,14 @@ class LoggerDemoHandler(SimpleHTTPRequestHandler):
                 self.server.invalidate_status_cache()  # type: ignore[attr-defined]
                 self.write_json(result)
             elif parsed.path == "/api/chat":
-                self.require_trusted_readiness()
                 self.write_json(self.handle_chat(payload))
+            elif parsed.path == "/api/bb-bot/upload":
+                self.write_json(self.bb_bot.save_upload(payload))
+            elif parsed.path == "/api/bb-bot/delete":
+                self.write_json(self.bb_bot.delete_document(payload))
+            elif parsed.path == "/api/bb-bot/context":
+                self.require_trusted_readiness()
+                self.write_json(self.handle_bb_bot_context(payload))
             else:
                 self.write_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
         except PermissionError as exc:
@@ -189,6 +314,100 @@ class LoggerDemoHandler(SimpleHTTPRequestHandler):
         count = self.logger.ingest_path(source)
         return {"ingested_entries": count, "source": str(source), "status": self.logger.integrity_panel()}
 
+    def handle_live_traffic(self, payload: dict[str, object]) -> dict[str, object]:
+        self.server.mark_live_traffic_activity()  # type: ignore[attr-defined]
+        records = payload.get("records")
+        if not isinstance(records, list) or not records:
+            raise ValueError("records must be a non-empty list")
+
+        events: list[RawEvent] = []
+        ai_items: list[tuple[RawEvent, dict[str, object], str | Path | None, int | None]] = []
+        has_ai = False
+        for index, item in enumerate(records):
+            if not isinstance(item, dict):
+                raise ValueError(f"records[{index}] must be an object")
+            event_payload = item.get("payload")
+            if not isinstance(event_payload, dict):
+                raise ValueError(f"records[{index}].payload must be an object")
+
+            source_file = normalize_local_source_file(
+                item.get("source_file") or payload.get("source_file")
+            )
+            source_type = str(item.get("source_type") or payload.get("source_type") or "LIVE_TRAFFIC")
+            source_offset = int(item.get("source_offset", index))
+            metadata = {
+                "ingest_mode": "live_traffic_simulator",
+                "scenario": payload.get("scenario"),
+                "domain": event_payload.get("domain"),
+                "data_format": event_payload.get("data_format"),
+                "anomaly_type": event_payload.get("anomaly_type"),
+                "occurred_at": event_payload.get("timestamp"),
+            }
+            event = RawEvent(
+                source_file=source_file,
+                source_type=source_type,
+                source_offset=source_offset,
+                payload=canonical_json(event_payload).encode("utf-8"),
+                metadata={key: value for key, value in metadata.items() if value not in (None, "")},
+            )
+            verdict = item.get("verdict")
+            if isinstance(verdict, dict):
+                has_ai = True
+                ai_items.append((event, verdict, source_file, source_offset))
+            else:
+                events.append(event)
+
+        if has_ai and events:
+            raise ValueError("live traffic batch cannot mix AI-scored and raw-only records")
+
+        if has_ai:
+            evidence_ids = self.logger.append_many_with_ai_evidence(ai_items)
+            checkpoint = (
+                self.logger.create_ai_evidence_checkpoint(
+                    evidence_ids,
+                    checkpoint_type="live_traffic_ai_batch",
+                )
+                if evidence_ids
+                else None
+            )
+            return {
+                "ingested_entries": len(ai_items),
+                "ai_evidence_records": len(evidence_ids),
+                "checkpoint": checkpoint,
+            }
+
+        count = self.logger.append_many(events)
+        return {
+            "ingested_entries": count,
+            "ai_evidence_records": 0,
+            "checkpoint": None,
+        }
+
+    def handle_attach_ai(self, payload: dict[str, object]) -> dict[str, object]:
+        self.server.mark_live_traffic_activity()  # type: ignore[attr-defined]
+        source_csv = Path(str(payload.get("source_csv", ""))).expanduser()
+        score_csv = Path(str(payload.get("score_csv", ""))).expanduser()
+        if not source_csv.is_absolute():
+            source_csv = PROJECT_ROOT / source_csv
+        if not score_csv.is_absolute():
+            score_csv = PROJECT_ROOT / score_csv
+        source_csv = source_csv.resolve()
+        score_csv = score_csv.resolve()
+        if not source_csv.exists():
+            raise FileNotFoundError(source_csv)
+        if not score_csv.exists():
+            raise FileNotFoundError(score_csv)
+        result = self.logger.attach_ai_evidence_from_csv(
+            source_csv,
+            score_csv,
+            include_shap=bool(payload.get("include_shap", True)),
+        )
+        self.server.mark_live_traffic_activity()  # type: ignore[attr-defined]
+        return {
+            **result,
+            "ai_evidence_records": result.get("attached", 0),
+        }
+
     def handle_demo(self, payload: dict[str, object]) -> dict[str, object]:
         from demo.traffic_simulator import (
             TrafficGenerator,
@@ -205,9 +424,18 @@ class LoggerDemoHandler(SimpleHTTPRequestHandler):
         ai_results = {}
         ai_attachments = {}
         ingested_entries = 0
-        for csv_path in sorted(output_dir.glob("*.csv")):
-            if csv_path.stem.endswith("_labels") or csv_path.stem.endswith("_scores"):
-                continue
+        csv_paths = sorted(output_dir.glob("*.csv"))
+        traffic_csv_paths = [
+            path for path in csv_paths
+            if not path.stem.endswith("_labels") and not path.stem.endswith("_scores")
+        ]
+        sidecar_csv_paths = [
+            path for path in csv_paths
+            if path.stem.endswith("_labels")
+        ]
+        pcap_paths = sorted(output_dir.glob("*.pcap"))
+
+        for csv_path in traffic_csv_paths:
             score_path = default_score_path(csv_path)
             ai_results[csv_path.name] = test_anomaly_detection(csv_path, score_path)
             ingested_entries += self.logger.ingest_path(csv_path)
@@ -216,6 +444,11 @@ class LoggerDemoHandler(SimpleHTTPRequestHandler):
                 score_path,
                 include_shap=True,
             )
+
+        for raw_artifact_path in [*sidecar_csv_paths, *pcap_paths]:
+            if raw_artifact_path.name.endswith("_scores.csv"):
+                continue
+            ingested_entries += self.logger.ingest_path(raw_artifact_path)
         artifacts = [
             {
                 "path": str(path),
@@ -259,7 +492,7 @@ class LoggerDemoHandler(SimpleHTTPRequestHandler):
         return self.logger.simulate_tamper_attempt(
             operation=str(payload.get("operation", "delete")),
             sequence=sequence,
-            actor=str(payload.get("actor", "dashboard")),
+            actor=str(payload.get("actor", "203.0.113.45")),
         )
 
     def handle_restore_ledger(self, payload: dict[str, object]) -> dict[str, object]:
@@ -268,49 +501,91 @@ class LoggerDemoHandler(SimpleHTTPRequestHandler):
             actor=str(payload.get("actor", "dashboard")),
         )
 
+    def handle_bb_bot_context(self, payload: dict[str, object]) -> dict[str, object]:
+        filters = payload.get("graph_filters") if isinstance(payload.get("graph_filters"), dict) else {}
+        query_parts: dict[str, object] = {}
+        if isinstance(filters, dict):
+            for key, value in filters.items():
+                if value in (None, "", [], {}):
+                    continue
+                if isinstance(value, list):
+                    query_parts[key] = ",".join(str(item) for item in value)
+                else:
+                    query_parts[key] = value
+        query = urlencode(query_parts)
+        graph_context = {
+            "graph": self.provenance_graph_payload(query),
+            "status": self.status_payload(),
+            "anomaly": self.logger.ai_evidence_summary(limit=1000),
+            "replay": self.logger.forensic_replay(),
+            "report": self.logger.forensic_report(),
+        }
+        return self.bb_bot.stage_forensic_context(payload, graph_context)
+
     def handle_chat(self, payload: dict[str, object]) -> dict[str, object]:
         question = str(payload.get("question", "")).strip()
+        extra_context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
+        if BBBotService._is_simple_smalltalk(question):
+            return self.bb_bot.answer(question, {})
+
         lower = question.lower()
-        status = self.logger.integrity_panel()
-        ai = self.logger.ai_evidence_summary(limit=5)
-        anomalies = list(ai.get("ranked_anomalies", []))
-        if not question:
-            answer = "Ask about anomalies, SHAP explanations, chain integrity, or report readiness."
-        elif "chain" in lower or "tamper" in lower or "hash" in lower or "integrity" in lower:
-            answer = (
-                f"Chain status is {status['status']}. "
-                f"{status['checked_entries']} entries were checked. "
-                f"Recovery ledger is {status['recovery_ledger'].get('status', 'unknown')} and "
-                f"trusted readiness is {status['trusted_readiness'].get('trusted', False)}."
+        wants_graph = any(
+            term in lower
+            for term in (
+                "attack",
+                "path",
+                "pattern",
+                "graph",
+                "relationship",
+                "linked",
+                "evidence",
+                "anomaly",
+                "incident",
+                "mutation",
+                "critical",
+                "response",
+                "demo",
+                "narrative",
+                "source",
+                "target",
             )
-        elif "shap" in lower or "explain" in lower or "why" in lower:
-            if anomalies:
-                top = anomalies[0]
-                features = ", ".join(top.get("top_features", [])) or "no SHAP features stored"
-                answer = (
-                    f"Latest anomaly evidence #{top['evidence_id']} maps to sequence "
-                    f"#{top['sequence']}. Top SHAP drivers: {features}. "
-                    f"{top.get('explanation') or 'No explanation text was attached.'}"
-                )
-            else:
-                answer = "No anomaly with SHAP explanation is currently attached."
-        elif "anomal" in lower or "suspicious" in lower or "alert" in lower:
-            answer = (
-                f"{ai['anomalies']} anomalies are attached out of "
-                f"{ai['total_ai_records']} AI evidence records. "
-                f"Severity counts: {ai['severity_counts']}."
-            )
-        elif "report" in lower or "compliance" in lower:
-            answer = (
-                "Use Download Report in Anomaly Detection. The report includes chain status, "
-                "AI evidence counts, latest anomaly references, SHAP notes, and replay head."
-            )
-        else:
-            answer = (
-                "BlueBox can answer from the local evidence index: anomaly counts, SHAP drivers, "
-                "chain integrity, recovery status, and report readiness."
-            )
-        return {"question": question, "answer": answer, "context": {"ai": ai, "status": status}}
+        )
+        wants_replay = any(term in lower for term in ("timeline", "replay"))
+        page_context = dict(extra_context)
+        sequences = extract_sequence_numbers(question)
+        if sequences:
+            raw_sequence_entries: list[dict[str, object]] = []
+            for sequence in sequences[:5]:
+                try:
+                    raw_sequence_entries.append(self.logger.decrypt_entry(sequence))
+                except Exception as exc:
+                    raw_sequence_entries.append(
+                        {
+                            "sequence": sequence,
+                            "source_type": "unavailable",
+                            "severity": "LOW",
+                            "summary": f"Raw sequence entry is not available: {exc}",
+                        }
+                    )
+            page_context["raw_sequence_entries"] = raw_sequence_entries
+            page_context["sequence_entries"] = self.status_payload().get("sequence_entries", [])
+
+        live_context = {
+            "status": self.status_payload(),
+            "latest_ai_summary": self.logger.ai_evidence_summary(limit=200),
+            "page_context": page_context,
+        }
+        if wants_replay and not sequences and not page_context.get("evidence_entries"):
+            try:
+                live_context["forensic_replay"] = self.logger.forensic_replay(limit=80)
+            except Exception:
+                live_context["forensic_replay"] = {}
+        if wants_graph:
+            try:
+                live_context["provenance_graph"] = self.provenance_graph_payload("limit=30")
+            except Exception:
+                live_context["provenance_graph"] = {}
+        return self.bb_bot.answer(question, live_context)
 
     def read_json(self) -> dict[str, object]:
         length = int(self.headers.get("Content-Length", "0"))
@@ -341,24 +616,41 @@ class LoggerDemoServer(ThreadingHTTPServer):
     def __init__(self, server_address, handler_class, logger: HashChainLogger):
         super().__init__(server_address, handler_class)
         self.logger = logger
+        self.bb_bot = BBBotService(logger)
         self._status_cache: tuple[float, dict[str, object]] | None = None
         self._status_cache_lock = RLock()
+        self._live_traffic_last_seen = 0.0
 
     def invalidate_status_cache(self) -> None:
         with self._status_cache_lock:
             self._status_cache = None
 
+    def mark_live_traffic_activity(self) -> None:
+        self._live_traffic_last_seen = time.monotonic()
+        self.invalidate_status_cache()
+
+    def live_traffic_status(self) -> dict[str, object]:
+        elapsed = time.monotonic() - self._live_traffic_last_seen
+        active = self._live_traffic_last_seen > 0 and elapsed <= 5.0
+        return {
+            "active": active,
+            "seconds_since_last_batch": round(elapsed, 2) if self._live_traffic_last_seen > 0 else None,
+        }
+
     def cached_status_payload(self, ttl_seconds: float = 1.0) -> dict[str, object]:
         now = time.monotonic()
         with self._status_cache_lock:
             if self._status_cache and now - self._status_cache[0] <= ttl_seconds:
-                return dict(self._status_cache[1])
+                payload = dict(self._status_cache[1])
+                payload["live_traffic"] = self.live_traffic_status()
+                return payload
             payload = self.logger.integrity_panel()
             payload["demo_capabilities"] = {
                 "demo_attaches_ai_evidence": True,
                 "demo_default_scenario": "mixed_attack",
                 "protected_read_gate": True,
             }
+            payload["live_traffic"] = self.live_traffic_status()
             self._status_cache = (now, payload)
             return dict(payload)
 

@@ -1,4 +1,4 @@
-# BlueBox Event Schema
+# Event Schema
 
 This document defines the normalized event format that the ML pipeline
 produces and the logger consumes.

@@ -14,7 +14,17 @@ export const api = {
   getStatus: () => apiClient.get('/status'),
   getAnomaly: () => apiClient.get('/anomaly'),
   getReplay: () => apiClient.get('/replay'),
-  getProvenanceGraph: (severity = 0.5) => apiClient.get('/provenance-graph', { params: { severity } }),
+  getProvenanceGraph: (severity = 0.5, params = {}) =>
+    apiClient.get('/provenance-graph', { params: { severity, ...params } }),
+  getProvenanceGraphFiltered: (filters = {}) =>
+    apiClient.get('/provenance-graph', { params: filters }),
+  exportProvenanceGraphPng: (filters = {}) =>
+    apiClient.get('/provenance-graph/export/png', {
+      params: filters,
+      responseType: 'blob',
+    }),
+  exportProvenanceGraphSummary: (filters = {}) =>
+    apiClient.get('/provenance-graph/export/summary', { params: filters }),
   getEntries: (limit = 50, offset = 0) => apiClient.get('/entries', { params: { limit, offset } }),
   getEntry: (sequence) => apiClient.get(`/entry/${sequence}`),
 
@@ -35,11 +45,18 @@ export const api = {
   report: () => apiClient.get('/report'),
   ledger: () => apiClient.get('/ledger'),
 
-  // Chat (basic)
-  chat: (message) => apiClient.post('/chat', { question: message }),
+  // BB Chat
+  chat: (message, context = {}) => apiClient.post('/chat', { question: message, context }, { timeout: 120000 }),
+  getBBBotDocuments: () => apiClient.get('/bb-bot/documents'),
+  uploadBBBotDocument: (document) => apiClient.post('/bb-bot/upload', document),
+  deleteBBBotDocument: (documentId) => apiClient.post('/bb-bot/delete', { id: documentId }),
+  stageBBBotContext: (context) => apiClient.post('/bb-bot/context', context),
 }
 
 export const handleApiError = (error) => {
+  if (error.code === 'ECONNABORTED') {
+    return 'BB Chat timed out while waiting for Ollama. Check that Ollama is running and the selected model is loaded.'
+  }
   if (error.response) {
     return error.response.data?.error || error.response.statusText
   }

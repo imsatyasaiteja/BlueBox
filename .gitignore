@@ -24,3 +24,14 @@ runtime/trust_boundary/**/*.compromised.*
 !runtime/trust_boundary/ai_evidence_ledger/.gitkeep
 
 assets/
+
+UI_layer/BB_bot/.env
+UI_layer/BB_bot/.env.local
+UI_layer/BB_bot/uploads/*
+!UI_layer/BB_bot/uploads/.gitkeep
+!UI_layer/BB_bot/uploads/README.md
+UI_layer/BB_bot/context/*
+!UI_layer/BB_bot/context/.gitkeep
+UI_layer/BB_bot/outputs/*
+!UI_layer/BB_bot/outputs/.gitkeep
+!UI_layer/BB_bot/outputs/README.md
