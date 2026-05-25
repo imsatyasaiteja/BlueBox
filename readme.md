@@ -53,7 +53,7 @@ BlueBox demonstrates three main dashboard capabilities:
    - Shows AI explanations such as top SHAP features and anomaly reasons.
 
 <br>
-<img src="./assets/anomaly_detection.png" width="800">
+<img src="./assets/anomaly_detection.png" width="100%">
 <br>
 
 2. **Trusted Logger and Recovery**
@@ -63,7 +63,7 @@ BlueBox demonstrates three main dashboard capabilities:
    - Demonstrates blocked tamper attempts and recovery from forced corruption.
   
 <br>
-<img src="./assets/logger_dashboard.png" width="800">
+<img src="./assets/logger_dashboard.png" width="100%">
 <br>
 
 3. **Forensic Replay, Provenance Graph, and BB Chat**
@@ -73,7 +73,7 @@ BlueBox demonstrates three main dashboard capabilities:
    - Answers sequence-specific and incident-response questions with EU Part-IS aligned steps.
 
 <br>
-<img src="./assets/provenance_graph.gif" width="800">
+<img src="./assets/provenance_graph.gif" width="100%">
 <br>
 
 ## Toolchain
